@@ -229,11 +229,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Signs out locally. Returns the provider's end-session URL when the
+  /// Signs out. Throws (keeping the session) if the server did not confirm.
+  /// Returns the provider's end-session URL when the
   /// server reports one; callers should open it so the provider session
   /// ends too and the next sign-in can pick a different account.
   Future<String?> logout() async {
-    final logoutUrl = await api.logout();
+    final logoutUrl = await api.logout(strict: true);
     user = null;
     houses = const [];
     restoredExistingSession = false;

@@ -147,20 +147,33 @@ class ApiClient {
 
   /// Clears the session. Returns the provider's end-session URL when the
   /// server reports one, so the caller can also end the provider session.
-  Future<String?> logout() async {
+  ///
+  /// With [strict] (the Log out button) a failed call throws and keeps the
+  /// local session so it can be retried; only a 2xx or 401 clears it. The
+  /// default is best-effort cleanup that always clears.
+  Future<String?> logout({bool strict = false}) async {
     String? logoutUrl;
     try {
       final response = await _http
           .post(Uri.parse('$baseUrl/auth/logout'), headers: _headers());
       if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
-        if (body is Map && body['logout_url'] is String) {
-          final url = body['logout_url'] as String;
-          if (isSafeNavigationUrl(url)) logoutUrl = url;
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['logout_url'] is String) {
+            final url = body['logout_url'] as String;
+            if (isSafeNavigationUrl(url)) logoutUrl = url;
+          }
+        } on FormatException {
+          // A 200 without a usable body is still a successful logout.
         }
+      } else if (strict &&
+          response.statusCode != 401 &&
+          (response.statusCode < 200 || response.statusCode >= 300)) {
+        throw ApiError.http(response.statusCode, response.body);
       }
     } catch (_) {
-      // Clearing the local session still logs the tab out if the network call fails.
+      if (strict) rethrow;
+      // Best effort: clearing the local session still logs the tab out.
     }
     _generation++;
     _token = null;

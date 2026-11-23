@@ -151,6 +151,10 @@ class RoomiesStrings {
       _t('Rename $name', 'Renomear $name', 'Renombrar $name');
   String get houseRenamed => _t('Name saved', 'Nome salvo', 'Nombre guardado');
   String get logout => _t('Log out', 'Sair', 'Cerrar sesión');
+  String get logoutFailed => _t(
+      "Couldn't sign out, try again.",
+      'Não foi possível sair, tente novamente.',
+      'No se pudo cerrar sesión, inténtalo de nuevo.');
   String get back => _t('Back', 'Voltar', 'Volver');
   String get loading => _t('Loading…', 'Carregando…', 'Cargando…');
   String get restoringSession =>
