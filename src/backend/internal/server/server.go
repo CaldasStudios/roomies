@@ -119,7 +119,7 @@ func NewHandler(deps Dependencies) http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.JWTAuth(deps.Config.JWTSecret, deps.UserRepo))
+		r.Use(middleware.JWTAuth(deps.Config.JWTSecret, deps.UserRepo, authHandler.SessionCookieName()))
 		r.Use(middleware.Idempotency(deps.ReliabilityRepo))
 
 		r.Get("/api/auth/me", authHandler.Me)

@@ -15,8 +15,8 @@ func TestConcurrentAcceptAndRevokeLeaveConsistentInvitationState(t *testing.T) {
 	repo, clk, cleanup := setupReliabilityRepoTest(t)
 	defer cleanup()
 	houseID, adminID := seedHouseFixture(t, repo)
-	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_subject, created_at) VALUES
-		('user-invitee', 'Invitee', 'invitee@example.com', 'sub-invitee', CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_issuer, auth_subject, created_at) VALUES
+		('user-invitee', 'Invitee', 'invitee@example.com', 'https://issuer.test', 'sub-invitee', CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	invite, token, err := repo.CreateInvitation(context.Background(), CreateInvitationParams{
@@ -82,7 +82,7 @@ func TestHouseEventDeliveryBarrierSerializesRemovalAndSendSQLite(t *testing.T) {
 	defer cleanup()
 	houseID, adminID := seedHouseFixture(t, repo)
 	memberID := "user-stream-member"
-	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_subject, created_at) VALUES ($1, 'Stream Member', 'stream-member@example.com', 'sub-stream-member', CURRENT_TIMESTAMP)`, memberID); err != nil {
+	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_issuer, auth_subject, created_at) VALUES ($1, 'Stream Member', 'stream-member@example.com', 'https://issuer.test', 'sub-stream-member', CURRENT_TIMESTAMP)`, memberID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.db.Exec(`INSERT INTO house_members (id, house_id, user_id, role, joined_at) VALUES ('member-stream', $1, $2, 'member', CURRENT_TIMESTAMP)`, houseID, memberID); err != nil {

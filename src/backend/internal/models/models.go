@@ -15,6 +15,7 @@ type User struct {
 	ID          string    `db:"id" json:"id"`
 	Name        string    `db:"name" json:"name"`
 	Email       string    `db:"email" json:"email"`
+	AuthIssuer  string    `db:"auth_issuer" json:"-"`
 	AuthSubject string    `db:"auth_subject" json:"-"`
 	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }

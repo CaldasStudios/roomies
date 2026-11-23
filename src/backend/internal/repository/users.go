@@ -10,7 +10,7 @@ import (
 	"github.com/roomies/backend/internal/models"
 )
 
-// ErrEmailInUse means the email already belongs to a different sign-in subject.
+// ErrEmailInUse means the email already belongs to a different sign-in identity.
 var ErrEmailInUse = errors.New("email belongs to another account")
 
 type UserRepository struct {
@@ -22,8 +22,8 @@ func NewUserRepository(db *sqlx.DB) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
-	query := `INSERT INTO users (id, name, email, auth_subject, created_at)
-		VALUES (:id, :name, :email, :auth_subject, :created_at)`
+	query := `INSERT INTO users (id, name, email, auth_issuer, auth_subject, created_at)
+		VALUES (:id, :name, :email, :auth_issuer, :auth_subject, :created_at)`
 	_, err := r.db.NamedExecContext(ctx, query, user)
 	return err
 }
@@ -46,9 +46,9 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.
 	return &user, nil
 }
 
-func (r *UserRepository) GetByAuthSubject(ctx context.Context, subject string) (*models.User, error) {
+func (r *UserRepository) GetByAuthIdentity(ctx context.Context, issuer, subject string) (*models.User, error) {
 	var user models.User
-	err := r.db.GetContext(ctx, &user, "SELECT * FROM users WHERE auth_subject = $1", subject)
+	err := r.db.GetContext(ctx, &user, "SELECT * FROM users WHERE auth_issuer = $1 AND auth_subject = $2", issuer, subject)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +71,38 @@ func (r *UserRepository) RevokeSession(ctx context.Context, jti string, expiresA
 	return err
 }
 
+// SaveSessionIDToken keeps the provider ID token of session jti as its logout
+// hint until the session expires.
+func (r *UserRepository) SaveSessionIDToken(ctx context.Context, jti, idToken string, expiresAt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO session_id_tokens (jti, id_token, expires_at) VALUES ($1, $2, $3)`,
+		jti, idToken, expiresAt.UTC())
+	return err
+}
+
+// TakeSessionIDToken returns and deletes the logout hint of session jti, or
+// "" when there is none.
+func (r *UserRepository) TakeSessionIDToken(ctx context.Context, jti string) (string, error) {
+	var idToken string
+	err := r.db.GetContext(ctx, &idToken, `SELECT id_token FROM session_id_tokens WHERE jti = $1`, jti)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	_, err = r.db.ExecContext(ctx, `DELETE FROM session_id_tokens WHERE jti = $1`, jti)
+	return idToken, err
+}
+
+// PurgeExpiredSessionIDTokens drops logout hints of expired sessions.
+func (r *UserRepository) PurgeExpiredSessionIDTokens(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM session_id_tokens WHERE expires_at < $1`, now.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // PurgeExpiredRevocations drops revocations for tokens that have expired.
 func (r *UserRepository) PurgeExpiredRevocations(ctx context.Context, now time.Time) (int64, error) {
 	result, err := r.db.ExecContext(ctx, `DELETE FROM revoked_sessions WHERE expires_at < $1`, now.UTC())
@@ -80,10 +112,10 @@ func (r *UserRepository) PurgeExpiredRevocations(ctx context.Context, now time.T
 	return result.RowsAffected()
 }
 
-// UpsertFromOIDC finds the user by sign-in subject, refreshing name and email,
-// or creates one. An email held by another subject is never linked.
-func (r *UserRepository) UpsertFromOIDC(ctx context.Context, subject, email, name string) (*models.User, error) {
-	if user, err := r.GetByAuthSubject(ctx, subject); err == nil {
+// UpsertFromOIDC finds the user by issuer and subject, refreshing name and
+// email, or creates one. An email held by another identity is never linked.
+func (r *UserRepository) UpsertFromOIDC(ctx context.Context, issuer, subject, email, name string) (*models.User, error) {
+	if user, err := r.GetByAuthIdentity(ctx, issuer, subject); err == nil {
 		if user.Name != name || user.Email != email {
 			if user.Email != email {
 				if other, err := r.GetByEmail(ctx, email); err == nil && other.ID != user.ID {
@@ -117,6 +149,7 @@ func (r *UserRepository) UpsertFromOIDC(ctx context.Context, subject, email, nam
 		ID:          models.NewID(),
 		Name:        name,
 		Email:       email,
+		AuthIssuer:  issuer,
 		AuthSubject: subject,
 		CreatedAt:   time.Now(),
 	}

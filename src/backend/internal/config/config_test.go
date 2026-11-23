@@ -165,3 +165,10 @@ func TestConfigAllowsPlainHTTPIssuerOnlyOnLocalhost(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadKeepsIssuerVerbatim(t *testing.T) {
+	t.Setenv("OIDC_ISSUER", " https://auth.example.com/api/auth/ ")
+	if got := Load().OIDCIssuer; got != "https://auth.example.com/api/auth/" {
+		t.Fatalf("OIDCIssuer = %q", got)
+	}
+}

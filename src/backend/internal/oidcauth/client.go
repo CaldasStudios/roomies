@@ -20,8 +20,19 @@ import (
 // the next request instead of failing server startup.
 var ErrUnavailable = errors.New("oidc discovery unavailable")
 
-// httpClient bounds every provider call (discovery, JWKS, token, userinfo).
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+// httpClient bounds every provider call (discovery, JWKS, token, userinfo)
+// and never follows a redirect from https down to http.
+var httpClient = &http.Client{Timeout: 15 * time.Second, CheckRedirect: checkRedirect}
+
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return errors.New("refusing redirect from https to http")
+	}
+	return nil
+}
 
 func withClient(ctx context.Context) context.Context {
 	return oidc.ClientContext(ctx, httpClient)
@@ -29,6 +40,7 @@ func withClient(ctx context.Context) context.Context {
 
 // Identity is the verified result of a sign-in.
 type Identity struct {
+	Issuer        string
 	Subject       string
 	Email         string
 	EmailVerified bool
@@ -61,8 +73,39 @@ func (c *Client) discover(ctx context.Context) (*oidc.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	if err := requireHTTPSEndpoints(c.Issuer, p); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
 	c.provider = p
 	return p, nil
+}
+
+// requireHTTPSEndpoints refuses an https issuer whose discovery document sends
+// codes, tokens, keys, or logout hints over plain http.
+func requireHTTPSEndpoints(issuer string, p *oidc.Provider) error {
+	if !strings.HasPrefix(issuer, "https://") {
+		return nil
+	}
+	var meta struct {
+		JWKS       string `json:"jwks_uri"`
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := p.Claims(&meta); err != nil {
+		return err
+	}
+	endpoint := p.Endpoint()
+	for name, value := range map[string]string{
+		"authorization_endpoint": endpoint.AuthURL,
+		"token_endpoint":         endpoint.TokenURL,
+		"jwks_uri":               meta.JWKS,
+		"userinfo_endpoint":      p.UserInfoEndpoint(),
+		"end_session_endpoint":   meta.EndSession,
+	} {
+		if value != "" && !strings.HasPrefix(value, "https://") {
+			return fmt.Errorf("%s is not https", name)
+		}
+	}
+	return nil
 }
 
 func (c *Client) config(p *oidc.Provider, redirect string) oauth2.Config {
@@ -82,17 +125,23 @@ func (c *Client) config(p *oidc.Provider, redirect string) oauth2.Config {
 }
 
 // AuthURL returns the provider authorization URL for one sign-in attempt.
-func (c *Client) AuthURL(ctx context.Context, redirect, state, challenge, nonce string) (string, error) {
+// forceLogin adds prompt=login so an existing provider session is not reused
+// silently.
+func (c *Client) AuthURL(ctx context.Context, redirect, state, challenge, nonce string, forceLogin bool) (string, error) {
 	p, err := c.discover(ctx)
 	if err != nil {
 		return "", err
 	}
 	cfg := c.config(p, redirect)
-	return cfg.AuthCodeURL(state,
+	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("code_challenge", challenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
 		oidc.Nonce(nonce),
-	), nil
+	}
+	if forceLogin {
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	return cfg.AuthCodeURL(state, opts...), nil
 }
 
 // Exchange redeems code, verifies the ID token (signature, issuer, audience,
@@ -128,15 +177,11 @@ func (c *Client) Exchange(ctx context.Context, redirect, code, verifier, nonce s
 	if err := id.Claims(&claims); err != nil {
 		return nil, err
 	}
-	identity := &Identity{Subject: id.Subject, Email: claims.Email, Name: claims.Name, IDToken: raw}
+	identity := &Identity{Issuer: id.Issuer, Subject: id.Subject, Email: claims.Email, Name: claims.Name, IDToken: raw}
 	if claims.EmailVerified != nil {
 		identity.EmailVerified = *claims.EmailVerified
 	}
 	if claims.Email == "" || claims.EmailVerified == nil {
-		// The access token never leaves HTTPS for a plain-HTTP userinfo URL.
-		if strings.HasPrefix(c.Issuer, "https://") && !strings.HasPrefix(p.UserInfoEndpoint(), "https://") {
-			return nil, errors.New("userinfo endpoint is not https")
-		}
 		info, err := p.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
 			return nil, err
@@ -155,7 +200,7 @@ func (c *Client) Exchange(ctx context.Context, redirect, code, verifier, nonce s
 			identity.Name = profile.Name
 		}
 	}
-	if identity.Subject == "" || identity.Email == "" {
+	if identity.Issuer == "" || identity.Subject == "" || identity.Email == "" {
 		return nil, errors.New("missing identity")
 	}
 	return identity, nil

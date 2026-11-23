@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -31,11 +32,7 @@ const (
 	nativeNonceCookie    = "roomies_native_nonce"
 	nativeChallenge      = "roomies_native_challenge"
 	defaultCallbackLimit = 15
-	// The provider ID token rides in the session JWT as the logout hint; a
-	// larger one is dropped so the session cookie stays well under 4 KB.
-	idTokenClaim   = "oidc_id_token"
-	maxIDTokenHint = 2048
-	appCodeTTL     = 2 * time.Minute
+	appCodeTTL           = 2 * time.Minute
 
 	oidcCallbackPath       = "/api/auth/oidc/callback"
 	oidcNativeCallbackPath = "/api/auth/oidc/native/callback"
@@ -128,7 +125,7 @@ func (h *AuthHandler) OIDCAuthorize(w http.ResponseWriter, r *http.Request) {
 	if h.oidcDisabled(w) {
 		return
 	}
-	authorizationURL, ok := h.beginOIDC(w, r, webOIDCCookies, oidcCallbackPath)
+	authorizationURL, ok := h.beginOIDC(w, r, webOIDCCookies, oidcCallbackPath, false)
 	if !ok {
 		return
 	}
@@ -146,7 +143,7 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	user, idToken, failure := h.completeOIDC(w, r, webOIDCCookies, oidcCallbackPath)
 	if failure == "" {
-		token, err := h.generateToken(user, idToken)
+		token, err := h.generateToken(r.Context(), user, idToken)
 		if err != nil {
 			failure = authErrorFailed
 		} else {
@@ -171,11 +168,14 @@ func (h *AuthHandler) OIDCNativeStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, models.ErrorResponse{Error: "app_challenge must be an S256 PKCE challenge"})
 		return
 	}
-	authorizationURL, ok := h.beginOIDC(w, r, nativeOIDCCookies, oidcNativeCallbackPath)
+	// Always prompt=login: another app could claim the redirect scheme and
+	// start its own transaction, which an existing provider session would
+	// otherwise grant silently.
+	authorizationURL, ok := h.beginOIDC(w, r, nativeOIDCCookies, oidcNativeCallbackPath, true)
 	if !ok {
 		return
 	}
-	setCookie(w, nativeChallenge, appChallenge, int(oauthTransactionTTL.Seconds()), true, h.secureCookie(r))
+	setCookie(w, h.cookieName(nativeChallenge), appChallenge, int(oauthTransactionTTL.Seconds()), true, h.secureCookie(r))
 	http.Redirect(w, r, authorizationURL, http.StatusFound)
 }
 
@@ -188,8 +188,8 @@ func (h *AuthHandler) OIDCNativeCallback(w http.ResponseWriter, r *http.Request)
 	if !h.allow(w, r, "oidc_native_callback", h.callbackLimit) {
 		return
 	}
-	challengeCookie, err := r.Cookie(nativeChallenge)
-	clearCookie(w, nativeChallenge, true, h.secureCookie(r))
+	challengeCookie, err := r.Cookie(h.cookieName(nativeChallenge))
+	clearCookie(w, h.cookieName(nativeChallenge), true, h.secureCookie(r))
 	var user *models.User
 	var idToken, failure string
 	if err != nil || !validPKCEChallenge(challengeCookie.Value) {
@@ -242,23 +242,23 @@ func (h *AuthHandler) OIDCExchange(w http.ResponseWriter, r *http.Request) {
 
 // beginOIDC stores a fresh state, verifier, and nonce in cookies and returns
 // the provider authorization URL. It writes the error response itself.
-func (h *AuthHandler) beginOIDC(w http.ResponseWriter, r *http.Request, names oidcCookies, callbackPath string) (string, bool) {
+func (h *AuthHandler) beginOIDC(w http.ResponseWriter, r *http.Request, names oidcCookies, callbackPath string, forceLogin bool) (string, bool) {
 	state, verifier, challenge, err := newOAuthTransaction()
 	nonce, nonceErr := randomURLToken()
 	if err != nil || nonceErr != nil {
 		writeJSON(w, http.StatusInternalServerError, models.ErrorResponse{Error: "failed to start sign-in"})
 		return "", false
 	}
-	authorizationURL, err := h.oidc.AuthURL(r.Context(), h.publicBaseURL+callbackPath, state, challenge, nonce)
+	authorizationURL, err := h.oidc.AuthURL(r.Context(), h.publicBaseURL+callbackPath, state, challenge, nonce, forceLogin)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, models.ErrorResponse{Error: "sign-in provider unavailable"})
 		return "", false
 	}
 	secure := h.secureCookie(r)
 	maxAge := int(oauthTransactionTTL.Seconds())
-	setCookie(w, names.state, state, maxAge, true, secure)
-	setCookie(w, names.verifier, verifier, maxAge, true, secure)
-	setCookie(w, names.nonce, nonce, maxAge, true, secure)
+	setCookie(w, h.cookieName(names.state), state, maxAge, true, secure)
+	setCookie(w, h.cookieName(names.verifier), verifier, maxAge, true, secure)
+	setCookie(w, h.cookieName(names.nonce), nonce, maxAge, true, secure)
 	return authorizationURL, true
 }
 
@@ -266,9 +266,9 @@ func (h *AuthHandler) beginOIDC(w http.ResponseWriter, r *http.Request, names oi
 // upserts the verified user. On failure it returns one of the authError codes.
 func (h *AuthHandler) completeOIDC(w http.ResponseWriter, r *http.Request, names oidcCookies, callbackPath string) (*models.User, string, string) {
 	query := r.URL.Query()
-	stateCookie, stateErr := r.Cookie(names.state)
-	verifierCookie, verifierErr := r.Cookie(names.verifier)
-	nonceCookie, nonceErr := r.Cookie(names.nonce)
+	stateCookie, stateErr := r.Cookie(h.cookieName(names.state))
+	verifierCookie, verifierErr := r.Cookie(h.cookieName(names.verifier))
+	nonceCookie, nonceErr := r.Cookie(h.cookieName(names.nonce))
 	h.clearOIDCCookies(w, r, names)
 	if query.Get("error") != "" {
 		return nil, "", authErrorProvider
@@ -291,7 +291,7 @@ func (h *AuthHandler) completeOIDC(w http.ResponseWriter, r *http.Request, names
 	if name == "" {
 		name = email
 	}
-	user, err := h.userRepo.UpsertFromOIDC(r.Context(), identity.Subject, email, name)
+	user, err := h.userRepo.UpsertFromOIDC(r.Context(), identity.Issuer, identity.Subject, email, name)
 	if errors.Is(err, repository.ErrEmailInUse) {
 		return nil, "", authErrorEmailInUse
 	}
@@ -303,9 +303,21 @@ func (h *AuthHandler) completeOIDC(w http.ResponseWriter, r *http.Request, names
 
 func (h *AuthHandler) clearOIDCCookies(w http.ResponseWriter, r *http.Request, names oidcCookies) {
 	secure := h.secureCookie(r)
-	clearCookie(w, names.state, true, secure)
-	clearCookie(w, names.verifier, true, secure)
-	clearCookie(w, names.nonce, true, secure)
+	clearCookie(w, h.cookieName(names.state), true, secure)
+	clearCookie(w, h.cookieName(names.verifier), true, secure)
+	clearCookie(w, h.cookieName(names.nonce), true, secure)
+}
+
+// cookieName gives HttpOnly auth cookies the __Host- prefix on an https
+// deployment so a sibling subdomain cannot plant them.
+func (h *AuthHandler) cookieName(name string) string {
+	return middleware.CookieName(name, strings.HasPrefix(h.publicBaseURL, "https://"))
+}
+
+// SessionCookieName is this deployment's session cookie name; the session
+// middleware must read exactly this name.
+func (h *AuthHandler) SessionCookieName() string {
+	return h.cookieName(middleware.SessionCookieName)
 }
 
 // Logout clears the Roomies session. When the provider supports it, it also
@@ -315,7 +327,14 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	claims := h.sessionClaims(r)
 	idTokenHint := ""
 	if claims != nil {
-		idTokenHint, _ = claims[idTokenClaim].(string)
+		if jti, _ := claims["jti"].(string); jti != "" {
+			hint, err := h.userRepo.TakeSessionIDToken(r.Context(), jti)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, models.ErrorResponse{Error: "failed to end session"})
+				return
+			}
+			idTokenHint = hint
+		}
 	}
 	logoutURL := h.oidc.LogoutURL(r.Context(), idTokenHint, h.publicBaseURL+"/")
 	// Revoke the token itself: clearing the cookie alone would leave a copied
@@ -330,7 +349,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	secure := h.secureCookie(r)
-	clearCookie(w, middleware.SessionCookieName, true, secure)
+	clearCookie(w, h.SessionCookieName(), true, secure)
 	clearCookie(w, middleware.SessionHintCookieName, false, secure)
 	if logoutURL != "" {
 		writeJSON(w, http.StatusOK, map[string]string{"logout_url": logoutURL})
@@ -342,7 +361,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // sessionClaims returns the claims of the request's still-valid Roomies
 // session token, or nil for missing, expired, or forged tokens.
 func (h *AuthHandler) sessionClaims(r *http.Request) jwt.MapClaims {
-	raw, ok := middleware.SessionToken(r)
+	raw, ok := middleware.SessionToken(r, h.SessionCookieName())
 	if !ok {
 		return nil
 	}
@@ -363,27 +382,33 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
-func (h *AuthHandler) generateToken(user *models.User, idToken string) (string, error) {
+// generateToken signs a session for user. The provider ID token, if any, is
+// stored server-side under the session id as the logout hint, never in the
+// token itself.
+func (h *AuthHandler) generateToken(ctx context.Context, user *models.User, idToken string) (string, error) {
 	jti, err := randomURLToken()
 	if err != nil {
 		return "", err
+	}
+	expires := time.Now().Add(h.sessionTTL)
+	if idToken != "" {
+		if err := h.userRepo.SaveSessionIDToken(ctx, jti, idToken, expires); err != nil {
+			return "", err
+		}
 	}
 	claims := jwt.MapClaims{
 		"user_id": user.ID,
 		"email":   user.Email,
 		"jti":     jti,
-		"exp":     time.Now().Add(h.sessionTTL).Unix(),
+		"exp":     expires.Unix(),
 		"iat":     time.Now().Unix(),
-	}
-	if idToken != "" && len(idToken) <= maxIDTokenHint {
-		claims[idTokenClaim] = idToken
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.jwtSecret))
 }
 
 func (h *AuthHandler) finishAuthWithSession(w http.ResponseWriter, r *http.Request, user *models.User, status int, idToken string) {
-	token, err := h.generateToken(user, idToken)
+	token, err := h.generateToken(r.Context(), user, idToken)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, models.ErrorResponse{Error: "failed to generate token"})
 		return
@@ -401,7 +426,7 @@ func (h *AuthHandler) finishAuthWithSession(w http.ResponseWriter, r *http.Reque
 func (h *AuthHandler) setSessionCookies(w http.ResponseWriter, r *http.Request, token string) {
 	secure := h.secureCookie(r)
 	maxAge := int(h.sessionTTL.Seconds())
-	setCookie(w, middleware.SessionCookieName, token, maxAge, true, secure)
+	setCookie(w, h.SessionCookieName(), token, maxAge, true, secure)
 	setCookie(w, middleware.SessionHintCookieName, "1", maxAge, false, secure)
 }
 

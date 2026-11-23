@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ import (
 )
 
 const oidcTestBase = "https://roomies.test"
+
+// fakeSeq keeps subjects and emails unique when tests share one database.
+var fakeSeq atomic.Int64
 
 // fakeOIDC is a minimal provider: discovery, JWKS, token, userinfo. Like
 // Better Auth by default, it leaves email and name out of the ID token.
@@ -47,7 +51,8 @@ func newFakeOIDC(t *testing.T) *fakeOIDC {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeOIDC{t: t, key: key, pub: pub, subject: "subject-1", email: "Person@Example.test", verified: true}
+	n := fakeSeq.Add(1)
+	f := &fakeOIDC{t: t, key: key, pub: pub, subject: fmt.Sprintf("subject-%d", n), email: fmt.Sprintf("Person-%d@Example.test", n), verified: true}
 	mux := http.NewServeMux()
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
@@ -109,6 +114,9 @@ func newFakeOIDC(t *testing.T) *fakeOIDC {
 	})
 	return f
 }
+
+// wantEmail is the normalized email Roomies stores for the fake's user.
+func (f *fakeOIDC) wantEmail() string { return strings.ToLower(f.email) }
 
 func (f *fakeOIDC) handler(env *testEnv) *handlers.AuthHandler {
 	h := handlers.NewAuthHandler(env.UserRepo, env.JWTSecret, &oidcauth.Client{Issuer: f.URL, ClientID: "roomies", ClientSecret: "secret", Name: "Test ID"})
@@ -180,12 +188,15 @@ func TestOIDCAuthorizeSetsTransactionCookies(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, cookie := range cookies {
-		if !cookie.HttpOnly || !cookie.Secure || cookie.MaxAge <= 0 || cookie.Value == "" {
+		if !cookie.HttpOnly || !cookie.Secure || cookie.Path != "/" || cookie.Domain != "" || cookie.MaxAge <= 0 || cookie.Value == "" {
 			t.Fatalf("transaction cookie = %#v", cookie)
 		}
 		seen[cookie.Name] = true
 	}
-	for _, name := range []string{"roomies_oauth_state", "roomies_oauth_verifier", "roomies_oauth_nonce"} {
+	if q.Get("prompt") != "" {
+		t.Fatalf("web sign-in must not force prompt: %v", q)
+	}
+	for _, name := range []string{"__Host-roomies_oauth_state", "__Host-roomies_oauth_verifier", "__Host-roomies_oauth_nonce"} {
 		if !seen[name] {
 			t.Fatalf("missing cookie %s in %v", name, seen)
 		}
@@ -213,7 +224,7 @@ func TestOIDCCallbackSignsInWebUser(t *testing.T) {
 			if f.userinfoCalls != wantCalls {
 				t.Fatalf("userinfo calls = %d, want %d", f.userinfoCalls, wantCalls)
 			}
-			session := responseCookie(w, "roomies_session")
+			session := responseCookie(w, "__Host-roomies_session")
 			if session == nil || !session.HttpOnly || !session.Secure || responseCookie(w, "roomies_session_hint") == nil {
 				t.Fatalf("session cookies = %#v", w.Result().Cookies())
 			}
@@ -225,7 +236,7 @@ func TestOIDCCallbackSignsInWebUser(t *testing.T) {
 			if err := json.Unmarshal(meRes.Body.Bytes(), &user); err != nil || meRes.Code != http.StatusOK {
 				t.Fatalf("me status = %d body = %s", meRes.Code, meRes.Body.String())
 			}
-			if user.Email != "person@example.test" || user.Name != wantName || strings.Contains(meRes.Body.String(), "subject-1") {
+			if user.Email != f.wantEmail() || user.Name != wantName || strings.Contains(meRes.Body.String(), f.subject) || strings.Contains(meRes.Body.String(), f.URL) {
 				t.Fatalf("me = %s", meRes.Body.String())
 			}
 		})
@@ -262,10 +273,10 @@ func TestOIDCCallbackFailuresRedirectWithCode(t *testing.T) {
 			if w.Code != http.StatusFound || w.Header().Get("Location") != oidcTestBase+"/?auth_error="+tc.want {
 				t.Fatalf("status = %d location = %q", w.Code, w.Header().Get("Location"))
 			}
-			if responseCookie(w, "roomies_session") != nil {
+			if responseCookie(w, "__Host-roomies_session") != nil {
 				t.Fatal("failed sign-in set a session cookie")
 			}
-			if _, err := env.UserRepo.GetByAuthSubject(t.Context(), "subject-1"); err == nil {
+			if _, err := env.UserRepo.GetByAuthIdentity(t.Context(), f.URL, f.subject); err == nil {
 				t.Fatal("failed sign-in created a user")
 			}
 		})
@@ -275,10 +286,10 @@ func TestOIDCCallbackFailuresRedirectWithCode(t *testing.T) {
 func TestOIDCCallbackRefusesEmailOfAnotherSubject(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.Cleanup()
-	if _, err := env.UserRepo.UpsertFromOIDC(t.Context(), "other-subject", "person@example.test", "Other"); err != nil {
+	f := newFakeOIDC(t)
+	if _, err := env.UserRepo.UpsertFromOIDC(t.Context(), f.URL, "other-subject", f.wantEmail(), "Other"); err != nil {
 		t.Fatal(err)
 	}
-	f := newFakeOIDC(t)
 	w := signInWeb(t, f, f.handler(env))
 	if w.Header().Get("Location") != oidcTestBase+"/?auth_error=email_in_use" {
 		t.Fatalf("location = %q", w.Header().Get("Location"))
@@ -299,8 +310,8 @@ func TestOIDCNativeSignInAndExchange(t *testing.T) {
 			t.Fatalf("native start status = %d body = %s", start.Code, start.Body.String())
 		}
 		q := f.capture(start.Header().Get("Location"))
-		if q.Get("redirect_uri") != oidcTestBase+"/api/auth/oidc/native/callback" {
-			t.Fatalf("native redirect_uri = %q", q.Get("redirect_uri"))
+		if q.Get("redirect_uri") != oidcTestBase+"/api/auth/oidc/native/callback" || q.Get("prompt") != "login" {
+			t.Fatalf("native authorization query = %v", q)
 		}
 		req := httptest.NewRequest(http.MethodGet, oidcTestBase+"/api/auth/oidc/native/callback?code=provider-code&state="+url.QueryEscape(q.Get("state")), nil)
 		for _, cookie := range start.Result().Cookies() {
@@ -331,9 +342,10 @@ func TestOIDCNativeSignInAndExchange(t *testing.T) {
 		t.Fatalf("exchange status = %d body = %s", w.Code, w.Body.String())
 	}
 	var auth models.AuthResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &auth); err != nil || auth.Token == "" || auth.User.Email != "person@example.test" {
+	if err := json.Unmarshal(w.Body.Bytes(), &auth); err != nil || auth.Token == "" || auth.User.Email != f.wantEmail() {
 		t.Fatalf("exchange body = %s", w.Body.String())
 	}
+	assertNoIDTokenInSession(t, auth.Token)
 	if w := exchange(code, "app-verifier-two"); w.Code != http.StatusUnauthorized {
 		t.Fatalf("reused app code status = %d", w.Code)
 	}
@@ -372,14 +384,50 @@ func TestOIDCExchangeIsRateLimited(t *testing.T) {
 	}
 }
 
+// assertNoIDTokenInSession checks the readable session JWT carries only the
+// session claims, never the provider ID token, and returns its jti.
+func assertNoIDTokenInSession(t *testing.T, token string) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if len(parts) != 3 || err != nil {
+		t.Fatalf("session token = %q", token)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	for key := range claims {
+		switch key {
+		case "user_id", "email", "jti", "exp", "iat":
+		default:
+			t.Fatalf("session token carries %q: %s", key, payload)
+		}
+	}
+	return claims["jti"].(string)
+}
+
+func storedIDTokens(t *testing.T, env *testEnv, jti string) int {
+	t.Helper()
+	var count int
+	if err := env.DB.Get(&count, `SELECT COUNT(*) FROM session_id_tokens WHERE jti = $1`, jti); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestLogoutReturnsProviderLogoutURL(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.Cleanup()
 	f := newFakeOIDC(t)
 	h := f.handler(env)
-	session := responseCookie(signInWeb(t, f, h), "roomies_session")
+	session := responseCookie(signInWeb(t, f, h), "__Host-roomies_session")
 	if session == nil {
 		t.Fatal("sign-in did not set a session")
+	}
+	jti := assertNoIDTokenInSession(t, session.Value)
+	if storedIDTokens(t, env, jti) != 1 {
+		t.Fatal("logout hint was not stored server-side")
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	req.AddCookie(session)
@@ -394,8 +442,11 @@ func TestLogoutReturnsProviderLogoutURL(t *testing.T) {
 		t.Fatalf("logout_url = %q", body["logout_url"])
 	}
 	q := logout.Query()
-	if q.Get("id_token_hint") == "" || q.Get("post_logout_redirect_uri") != oidcTestBase+"/" || q.Get("client_id") != "roomies" {
+	if len(strings.Split(q.Get("id_token_hint"), ".")) != 3 || q.Get("post_logout_redirect_uri") != oidcTestBase+"/" || q.Get("client_id") != "roomies" {
 		t.Fatalf("logout query = %v", q)
+	}
+	if storedIDTokens(t, env, jti) != 0 {
+		t.Fatal("logout left the stored hint behind")
 	}
 	me := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	me.AddCookie(session)
@@ -403,6 +454,86 @@ func TestLogoutReturnsProviderLogoutURL(t *testing.T) {
 	env.Router.ServeHTTP(meRes, me)
 	if meRes.Code != http.StatusUnauthorized {
 		t.Fatalf("signed-out session still works: %d", meRes.Code)
+	}
+}
+
+func TestExpiredSessionIDTokensArePurged(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	now := time.Now()
+	old, live := models.NewID(), models.NewID()
+	if err := env.UserRepo.SaveSessionIDToken(t.Context(), old, "old.id.token", now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.UserRepo.SaveSessionIDToken(t.Context(), live, "live.id.token", now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.UserRepo.PurgeExpiredSessionIDTokens(t.Context(), now); err != nil {
+		t.Fatal(err)
+	}
+	if storedIDTokens(t, env, old) != 0 || storedIDTokens(t, env, live) != 1 {
+		t.Fatal("purge removed the wrong logout hints")
+	}
+}
+
+func TestOIDCSameSubjectFromAnotherIssuerIsAnotherUser(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	first, second := newFakeOIDC(t), newFakeOIDC(t)
+	second.subject = first.subject
+	for _, f := range []*fakeOIDC{first, second} {
+		if w := signInWeb(t, f, f.handler(env)); w.Header().Get("Location") != oidcTestBase+"/" {
+			t.Fatalf("sign-in via %s: location = %q", f.URL, w.Header().Get("Location"))
+		}
+	}
+	a, errA := env.UserRepo.GetByAuthIdentity(t.Context(), first.URL, first.subject)
+	b, errB := env.UserRepo.GetByAuthIdentity(t.Context(), second.URL, second.subject)
+	if errA != nil || errB != nil || a.ID == b.ID || a.Email != first.wantEmail() || b.Email != second.wantEmail() {
+		t.Fatalf("users = %#v %#v (%v, %v)", a, b, errA, errB)
+	}
+}
+
+func TestPlainHTTPDeploymentKeepsPlainCookieNames(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	f := newFakeOIDC(t)
+	h := f.handler(env)
+	h.SetPublicBaseURL("http://localhost:8080")
+	start := httptest.NewRecorder()
+	h.OIDCAuthorize(start, httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/auth/oidc/authorize", nil))
+	var body map[string]string
+	if err := json.Unmarshal(start.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	q := f.capture(body["url"])
+	for _, cookie := range start.Result().Cookies() {
+		if strings.HasPrefix(cookie.Name, "__Host-") || cookie.Secure {
+			t.Fatalf("plain-http transaction cookie = %#v", cookie)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/auth/oidc/callback?code=c&state="+url.QueryEscape(q.Get("state")), nil)
+	for _, cookie := range start.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, req)
+	if w.Header().Get("Location") != "http://localhost:8080/" || responseCookie(w, "roomies_session") == nil {
+		t.Fatalf("location = %q cookies = %v", w.Header().Get("Location"), w.Result().Cookies())
+	}
+}
+
+func TestHTTPSDeploymentIgnoresUnprefixedSessionCookie(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	token := registerUser(t, env.Router, "Tossed", "tossed@test.com", "unused")
+	for name, want := range map[string]int{"roomies_session": http.StatusUnauthorized, "__Host-roomies_session": http.StatusOK} {
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: name, Value: token})
+		w := httptest.NewRecorder()
+		env.Router.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("cookie %s: status = %d, want %d", name, w.Code, want)
+		}
 	}
 }
 

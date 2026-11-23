@@ -21,7 +21,19 @@ const (
 	// SessionHintCookieName is a non-secret flag so the web app can decide
 	// whether to call /api/auth/me without probing on every anonymous visit.
 	SessionHintCookieName = "roomies_session_hint"
+	// HostCookiePrefix makes browsers accept a cookie only when it is Secure,
+	// host-only, and Path=/, so a sibling subdomain cannot plant it.
+	HostCookiePrefix = "__Host-"
 )
+
+// CookieName returns name with the __Host- prefix for an https deployment.
+// Plain-http deployments (local development) keep the plain name.
+func CookieName(name string, httpsOrigin bool) string {
+	if httpsOrigin {
+		return HostCookiePrefix + name
+	}
+	return name
+}
 
 func GetUserID(ctx context.Context) string {
 	v, _ := ctx.Value(userIDKey).(string)
@@ -34,13 +46,15 @@ func GetUserEmail(ctx context.Context) string {
 }
 
 // SessionToken returns the raw session JWT from the request, if any.
-func SessionToken(r *http.Request) (string, bool) {
-	return sessionToken(r)
+// cookieName is the deployment's session cookie name (see CookieName); only
+// that name is read, so an https deployment never accepts an unprefixed one.
+func SessionToken(r *http.Request, cookieName string) (string, bool) {
+	return sessionToken(r, cookieName)
 }
 
 // sessionToken prefers an Authorization bearer so API clients and tests keep
 // working, and otherwise reads the HttpOnly session cookie used by Flutter web.
-func sessionToken(r *http.Request) (string, bool) {
+func sessionToken(r *http.Request, cookieName string) (string, bool) {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	if auth != "" {
 		parts := strings.SplitN(auth, " ", 2)
@@ -50,7 +64,7 @@ func sessionToken(r *http.Request) (string, bool) {
 		raw := strings.TrimSpace(parts[1])
 		return raw, raw != ""
 	}
-	cookie, err := r.Cookie(SessionCookieName)
+	cookie, err := r.Cookie(cookieName)
 	if err != nil {
 		return "", false
 	}
@@ -80,10 +94,10 @@ func ParseSessionClaims(raw, secret string) (jwt.MapClaims, error) {
 
 // JWTAuth accepts a session only when its signature, expiry, and id are valid
 // and sessions reports it active (not signed out, user not deleted).
-func JWTAuth(secret string, sessions SessionChecker) func(http.Handler) http.Handler {
+func JWTAuth(secret string, sessions SessionChecker, cookieName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, ok := sessionToken(r)
+			raw, ok := sessionToken(r, cookieName)
 			if !ok {
 				writeError(w, http.StatusUnauthorized, "missing authorization header")
 				return

@@ -103,6 +103,9 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		if _, err := w.userRepo.PurgeExpiredRevocations(ctx, time.Now()); err != nil {
 			return err
 		}
+		if _, err := w.userRepo.PurgeExpiredSessionIDTokens(ctx, time.Now()); err != nil {
+			return err
+		}
 		w.lastSessionPurge = time.Now()
 	}
 	job, err := w.repo.AcquireNextJob(ctx, w.owner, w.leaseDuration)

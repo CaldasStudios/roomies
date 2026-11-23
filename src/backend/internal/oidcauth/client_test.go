@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnabledNeedsIssuerAndClientID(t *testing.T) {
@@ -39,15 +40,86 @@ func TestDiscoveryFailureIsRetried(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 	c := &Client{Issuer: issuer, ClientID: "roomies"}
-	if _, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n"); !errors.Is(err, ErrUnavailable) {
+	if _, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("first attempt err = %v", err)
 	}
 	up = true
-	authURL, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n")
+	authURL, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false)
 	if err != nil || !strings.HasPrefix(authURL, issuer+"/authorize?") {
 		t.Fatalf("retry = %q, %v", authURL, err)
 	}
 	if c.LogoutURL(t.Context(), "hint", "https://roomies.test/") != "" {
 		t.Fatal("logout url without end_session_endpoint")
+	}
+}
+
+// discoveryServer serves a discovery document whose endpoints sit under
+// endpointBase; issuer is filled in once the server URL is known.
+func discoveryServer(t *testing.T, tls bool, issuerSuffix string, endpointBase func(self string) string) (*httptest.Server, string) {
+	t.Helper()
+	var issuer string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base := endpointBase(strings.TrimSuffix(issuer, "/"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 issuer,
+			"authorization_endpoint": base + "/authorize",
+			"token_endpoint":         base + "/token",
+			"jwks_uri":               base + "/jwks",
+			"userinfo_endpoint":      base + "/userinfo",
+		})
+	})
+	server := httptest.NewServer(handler)
+	if tls {
+		server.Close()
+		server = httptest.NewTLSServer(handler)
+		trust := httpClient
+		httpClient = &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport, CheckRedirect: checkRedirect}
+		t.Cleanup(func() { httpClient = trust })
+	}
+	t.Cleanup(server.Close)
+	issuer = server.URL + issuerSuffix
+	return server, issuer
+}
+
+func TestIssuerWithTrailingSlashMatchesDiscovery(t *testing.T) {
+	_, issuer := discoveryServer(t, false, "/", func(self string) string { return self })
+	c := &Client{Issuer: issuer, ClientID: "roomies"}
+	if _, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false); err != nil {
+		t.Fatalf("issuer %q: %v", issuer, err)
+	}
+}
+
+func TestHTTPSIssuerRequiresHTTPSEndpoints(t *testing.T) {
+	_, issuer := discoveryServer(t, true, "", func(self string) string { return strings.Replace(self, "https://", "http://", 1) })
+	c := &Client{Issuer: issuer, ClientID: "roomies"}
+	_, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false)
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "is not https") {
+		t.Fatalf("plain-http endpoints accepted: %v", err)
+	}
+}
+
+func TestHTTPSDiscoveryRefusesRedirectToHTTP(t *testing.T) {
+	plain := httptest.NewServer(http.NotFoundHandler())
+	defer plain.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer secure.Close()
+	trust := httpClient
+	httpClient = &http.Client{Timeout: 5 * time.Second, Transport: secure.Client().Transport, CheckRedirect: checkRedirect}
+	defer func() { httpClient = trust }()
+	c := &Client{Issuer: secure.URL, ClientID: "roomies"}
+	_, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false)
+	if err == nil || !strings.Contains(err.Error(), "refusing redirect from https to http") {
+		t.Fatalf("downgrade redirect followed: %v", err)
+	}
+}
+
+func TestForceLoginAddsPrompt(t *testing.T) {
+	_, issuer := discoveryServer(t, false, "", func(self string) string { return self })
+	c := &Client{Issuer: issuer, ClientID: "roomies"}
+	authURL, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", true)
+	if err != nil || !strings.Contains(authURL, "prompt=login") {
+		t.Fatalf("authURL = %q, %v", authURL, err)
 	}
 }

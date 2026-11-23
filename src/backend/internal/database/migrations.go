@@ -103,12 +103,27 @@ func oidcAuthSubjectStatements(driver string) []string {
 		`ALTER TABLE users DROP COLUMN password_hash`,
 	}
 	if driver == "postgres" {
-		return append(statements, `ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL UNIQUE`)
+		statements = append(statements,
+			`ALTER TABLE users ADD COLUMN auth_issuer TEXT NOT NULL`,
+			`ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL`,
+		)
+	} else {
+		// SQLite cannot add a NOT NULL column without a default.
+		statements = append(statements,
+			`ALTER TABLE users ADD COLUMN auth_issuer TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL DEFAULT ''`,
+		)
 	}
-	// SQLite cannot add a UNIQUE column, nor a NOT NULL one without a default.
 	return append(statements,
-		`ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL DEFAULT ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_subject ON users(auth_subject)`,
+		// A subject is only unique within its issuer.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_identity ON users(auth_issuer, auth_subject)`,
+		// Provider ID tokens kept server-side as the logout hint, one per session.
+		`CREATE TABLE IF NOT EXISTS session_id_tokens (
+			jti TEXT PRIMARY KEY,
+			id_token TEXT NOT NULL,
+			expires_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_id_tokens_expires ON session_id_tokens(expires_at)`,
 	)
 }
 

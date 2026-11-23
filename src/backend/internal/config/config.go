@@ -88,7 +88,7 @@ func Load() *Config {
 		WebPushSubject:              getEnv("WEB_PUSH_SUBJECT", "mailto:no-reply@roomies.local"),
 		FCMProjectID:                strings.TrimSpace(os.Getenv("FCM_PROJECT_ID")),
 		FCMCredentialsFile:          strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")),
-		OIDCIssuer:                  strings.TrimRight(strings.TrimSpace(os.Getenv("OIDC_ISSUER")), "/"),
+		OIDCIssuer:                  strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
 		OIDCClientID:                strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
 		OIDCClientSecret:            strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
 		OIDCName:                    getEnv("OIDC_NAME", "CaldasStudios"),

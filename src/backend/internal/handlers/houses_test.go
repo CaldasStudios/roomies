@@ -27,7 +27,7 @@ func registerUser(t *testing.T, router http.Handler, name, email, password strin
 		t.Fatal("registerUser needs a router from newTestEnv")
 	}
 	env := value.(*testEnv)
-	user, err := env.UserRepo.UpsertFromOIDC(t.Context(), "subject-"+email, email, name)
+	user, err := env.UserRepo.UpsertFromOIDC(t.Context(), "https://issuer.test", "subject-"+email, email, name)
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
 	}

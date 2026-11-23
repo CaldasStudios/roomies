@@ -293,7 +293,7 @@ func assertFinancialRecordsPreserved(t *testing.T, db *sqlx.DB) {
 // houses and records it owned are gone, and users has the OIDC columns.
 func assertAccountsWiped(t *testing.T, db *sqlx.DB) {
 	t.Helper()
-	for _, table := range []string{"users", "houses", "house_members", "expenses", "expense_splits", "idempotency_keys", "revoked_sessions"} {
+	for _, table := range []string{"users", "houses", "house_members", "expenses", "expense_splits", "idempotency_keys", "revoked_sessions", "session_id_tokens"} {
 		var count int
 		if err := db.Get(&count, "SELECT COUNT(*) FROM "+table); err != nil {
 			t.Fatal(err)
@@ -302,7 +302,7 @@ func assertAccountsWiped(t *testing.T, db *sqlx.DB) {
 			t.Fatalf("%s still has %d rows after the OIDC account reset", table, count)
 		}
 	}
-	if got, want := userColumns(t, db), "auth_subject,created_at,email,id,name"; got != want {
+	if got, want := userColumns(t, db), "auth_issuer,auth_subject,created_at,email,id,name"; got != want {
 		t.Fatalf("users columns = %s, want %s", got, want)
 	}
 }
@@ -355,7 +355,7 @@ func TestSQLiteForeignKeysAndMigrations(t *testing.T) {
 		t.Fatalf("expected %d recorded migrations, got %d", expectedMigrations, migrationCount)
 	}
 	// A fresh database ends with the same users table as an upgraded one.
-	if got, want := userColumns(t, db), "auth_subject,created_at,email,id,name"; got != want {
+	if got, want := userColumns(t, db), "auth_issuer,auth_subject,created_at,email,id,name"; got != want {
 		t.Fatalf("fresh users columns = %s, want %s", got, want)
 	}
 }
