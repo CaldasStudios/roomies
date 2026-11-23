@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,10 @@ type testEnv struct {
 	JWTSecret        string
 	Cleanup          func()
 }
+
+// testEnvs maps each test router to its env so helpers that only get the
+// router (registerUser) can reach the database and JWT secret.
+var testEnvs sync.Map
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
@@ -87,7 +92,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		NotificationRepo: notificationRepo,
 		HouseholdRepo:    householdRepo,
 	})
-	return &testEnv{
+	env := &testEnv{
 		Router:           router,
 		DB:               db,
 		Clock:            clk,
@@ -102,4 +107,6 @@ func newTestEnv(t *testing.T) *testEnv {
 		JWTSecret:        cfg.JWTSecret,
 		Cleanup:          func() { _ = db.Close() },
 	}
+	testEnvs.Store(router, env)
+	return env
 }

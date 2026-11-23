@@ -4,7 +4,7 @@ Roomies helps roommates manage shared expenses, notes, balances, and house-scope
 
 - **Apps:** web, Android, Windows, Linux (Flutter)
 - **Server:** Go API + worker, PostgreSQL, behind Caddy
-- **Sign-in:** local email/password, or WorkOS AuthKit
+- **Sign-in:** OpenID Connect (any standard provider)
 
 You only need Docker (Podman works too); no clone of this repo.
 
@@ -25,8 +25,11 @@ x-backend: &backend
     CORS_ALLOWED_ORIGINS: ${ROOMIES_PUBLIC_BASE_URL}
     TLS_CERT_FILE: /tls/backend.crt
     TLS_KEY_FILE: /tls/backend.key
-    WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:-}
-    WORKOS_API_KEY: ${WORKOS_API_KEY:-}
+    OIDC_ISSUER: ${OIDC_ISSUER:-}
+    OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+    OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    OIDC_NAME: ${OIDC_NAME:-}
+    OIDC_NATIVE_ENABLED: ${OIDC_NATIVE_ENABLED:-false}
   volumes:
     - tls:/tls:ro
   depends_on:
@@ -103,8 +106,11 @@ POSTGRES_PASSWORD=          # openssl rand -hex 24
 JWT_SECRET=                 # openssl rand -hex 48
 ROOMIES_PUBLIC_BASE_URL=https://roomies.example.com   # bare origin; app at /app/, API at /api (or http://localhost:8080 to try it)
 # SITE_ADDRESS=roomies.example.com                    # see the comment in compose.yaml
-# WORKOS_CLIENT_ID=client_...                         # optional, see below
-# WORKOS_API_KEY=sk_...
+# OIDC_ISSUER=https://idp.example.com                 # optional, see below
+# OIDC_CLIENT_ID=roomies
+# OIDC_CLIENT_SECRET=                                 # blank for a public client
+# OIDC_NAME=Sign in                                   # sign-in button label
+# OIDC_NATIVE_ENABLED=false                           # Android sign-in, see below
 ```
 
 **3. Start it:**
@@ -120,7 +126,17 @@ Optional backend variables (email invitations, Web Push, FCM) are listed with co
 
 **Encryption in transit.** Browsers and apps reach Caddy over HTTPS when `SITE_ADDRESS` is a domain (HSTS is sent). Between containers, `tls-init` issues a private CA (kept across restarts, key readable by root only): Caddy reaches the API, and the API and worker reach PostgreSQL, over TLS with certificate checks; PostgreSQL rejects plaintext TCP connections. Invitation email requires STARTTLS or TLS (`SMTP_TLS`). Using an external PostgreSQL? Point `DATABASE_URL` at it with `sslmode=verify-full` (plus `sslrootcert=` for a private CA); production refuses any weaker mode, since only `verify-full` checks the server's certificate and hostname.
 
-**WorkOS AuthKit (optional).** Without it, people sign up with email and password. To use hosted sign-in, create a [WorkOS](https://workos.com/docs/authkit) project, set `WORKOS_CLIENT_ID` and `WORKOS_API_KEY`, and register `{ROOMIES_PUBLIC_BASE_URL}/callback` as a redirect URI.
+**OpenID Connect sign-in.** Sign-in works with any OpenID Connect provider. Without `OIDC_ISSUER` and `OIDC_CLIENT_ID`, sign-in is off. Set `OIDC_ISSUER` to the provider's issuer URL and `OIDC_CLIENT_ID` to your client. Set `OIDC_CLIENT_SECRET` for a confidential client, or leave it blank for a public client. `OIDC_NAME` sets the sign-in button label. `OIDC_NATIVE_ENABLED=true` enables Android sign-in through a custom-scheme callback, which another installed app could intercept; enable it only if you accept that.
+
+At the provider, register:
+
+- redirect URIs `{ROOMIES_PUBLIC_BASE_URL}/api/auth/oidc/callback` (web) and `{ROOMIES_PUBLIC_BASE_URL}/api/auth/oidc/native/callback` (Android)
+- post-logout redirect URI `{ROOMIES_PUBLIC_BASE_URL}/app/`
+- scopes `openid profile email`
+
+The provider must report verified emails; sign-in is refused for unverified ones. Accounts are keyed by the provider's `sub`. Sign-in works on web and Android. The Windows and Linux apps show a note instead of a sign-in button.
+
+**Upgrading:** the first start of this version deletes existing Roomies users and their data.
 
 ## Apps
 
@@ -136,7 +152,7 @@ Everything runs through Docker Compose; no Go or Flutter install needed. The roo
 docker compose up --build    # optional: cp .env.example .env first
 ```
 
-Open <http://localhost:8080/app/> and sign up with any email and password. This starts Postgres, the Go API and worker (`go run` on the mounted `src/backend/`), and `web`, which builds the Flutter web app from `src/frontend/` and serves it with Caddy next to the API. Change the port with `HTTP_PORT` and a matching `ROOMIES_PUBLIC_BASE_URL`. Stop with `docker compose down` (`-v` also wipes the database).
+Open <http://localhost:8080/app/> and sign in. The bundled mock OpenID Connect provider at <http://oidc.localhost:8090/default> accepts any username. To sign in as another account, enter claims JSON such as `{"email":"bob@example.test","name":"Bob"}`. This starts Postgres, the Go API and worker (`go run` on the mounted `src/backend/`), and `web`, which builds the Flutter web app from `src/frontend/` and serves it with Caddy next to the API. Change the port with `HTTP_PORT` and a matching `ROOMIES_PUBLIC_BASE_URL`. Stop with `docker compose down` (`-v` also wipes the database).
 
 | Changed | Do |
 |---|---|

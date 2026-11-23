@@ -41,26 +41,23 @@ class RoomiesStrings {
   String get privacyLine =>
       _t('Private by default', 'Privado por padrão', 'Privado por defecto');
 
-  String get signIn => _t('Sign in', 'Entrar', 'Iniciar sesión');
   String get redirecting =>
       _t('Redirecting…', 'Redirecionando…', 'Redirigiendo…');
-  String get createAccount =>
-      _t('Create account', 'Criar conta', 'Crear cuenta');
-  String get useEmailPassword => _t('Use email and password',
-      'Usar email e senha', 'Usar correo y contraseña');
-  String get hideEmailPassword => _t('Hide', 'Ocultar', 'Ocultar');
-  String get login => signIn;
-  String get loggingIn => _t('Signing in…', 'Entrando…', 'Iniciando sesión…');
-  String get register => createAccount;
-  String get registering => _t('Creating…', 'Criando…', 'Creando…');
-  String get noAccountSignUp => createAccount;
-  String get noAccountRegister => createAccount;
-  String get haveAccountLogin => _t('Already have an account? Sign in',
-      'Já tem conta? Entrar', '¿Ya tienes cuenta? Inicia sesión');
-  String get email => 'Email';
-  String get password => _t('Password', 'Senha', 'Contraseña');
+  String continueWith(String provider) =>
+      _t('Continue with $provider', 'Continuar com $provider',
+          'Continuar con $provider');
+  String get signInNativeOffNote => _t(
+      'Sign-in on this app is turned off by the server. Use the web app.',
+      'A entrada neste app está desativada pelo servidor. Use o app web.',
+      'El inicio de sesión en esta app está desactivado por el servidor. Usa la app web.');
+  String get signInDesktopNote => _t(
+      'Sign-in is available on the web and Android apps.',
+      'A entrada está disponível nos apps web e Android.',
+      'El inicio de sesión está disponible en las apps web y Android.');
   String get name => _t('Name', 'Nome', 'Nombre');
 
+  String get continueToDashboard => _t('Continue to dashboard',
+      'Continuar para o painel', 'Continuar al panel');
   String get dashboard => _t('Dashboard', 'Painel', 'Panel');
   String welcomeBack(String name) =>
       _t('Hi, $name', 'Olá, $name', 'Hola, $name');
@@ -154,18 +151,28 @@ class RoomiesStrings {
       _t('Rename $name', 'Renomear $name', 'Renombrar $name');
   String get houseRenamed => _t('Name saved', 'Nome salvo', 'Nombre guardado');
   String get logout => _t('Log out', 'Sair', 'Cerrar sesión');
+  String get logoutFailed => _t(
+      "Couldn't sign out, try again.",
+      'Não foi possível sair, tente novamente.',
+      'No se pudo cerrar sesión, inténtalo de nuevo.');
   String get back => _t('Back', 'Voltar', 'Volver');
-  String get backToLogin =>
-      _t('Back to sign in', 'Voltar para entrar', 'Volver a iniciar sesión');
   String get loading => _t('Loading…', 'Carregando…', 'Cargando…');
   String get restoringSession =>
       _t('Restoring…', 'Restaurando…', 'Restaurando…');
-  String get completingSignIn =>
-      _t('Finishing…', 'Concluindo…', 'Finalizando…');
-  String signInFailed(String detail) => _t('Sign-in failed: $detail',
-      'Falha ao entrar: $detail', 'Error al iniciar sesión: $detail');
-  String get missingAuthCode =>
-      _t('missing code.', 'código ausente.', 'falta el código.');
+  String get signInFailed => _t('Sign-in failed. Please try again.',
+      'Falha ao entrar. Tente novamente.',
+      'Error al iniciar sesión. Inténtalo de nuevo.');
+  String get signInDenied => _t('Sign-in was cancelled or denied.',
+      'A entrada foi cancelada ou negada.',
+      'El inicio de sesión fue cancelado o denegado.');
+  String get signInEmailNotVerified => _t(
+      'Verify your email with the sign-in provider, then try again.',
+      'Verifique seu email no provedor de login e tente novamente.',
+      'Verifica tu correo con el proveedor de acceso e inténtalo de nuevo.');
+  String get signInEmailInUse => _t(
+      'This email already belongs to another account.',
+      'Este email já pertence a outra conta.',
+      'Este correo ya pertenece a otra cuenta.');
   String get redirectingToLogin =>
       _t('Redirecting…', 'Redirecionando…', 'Redirigiendo…');
   String get checkingInvitation => _t('Checking invitation…',

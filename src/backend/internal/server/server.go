@@ -13,8 +13,8 @@ import (
 	"github.com/roomies/backend/internal/config"
 	"github.com/roomies/backend/internal/handlers"
 	"github.com/roomies/backend/internal/middleware"
+	"github.com/roomies/backend/internal/oidcauth"
 	"github.com/roomies/backend/internal/repository"
-	"github.com/roomies/backend/internal/workosauth"
 )
 
 type Dependencies struct {
@@ -45,14 +45,16 @@ func NewHandler(deps Dependencies) http.Handler {
 		isReady = func() bool { return true }
 	}
 
-	workosClient := &workosauth.Client{
-		APIKey:      deps.Config.WorkOSAPIKey,
-		ClientID:    deps.Config.WorkOSClientID,
-		RedirectURI: deps.Config.WorkOSRedirect(),
+	oidcClient := &oidcauth.Client{
+		Issuer:       deps.Config.OIDCIssuer,
+		ClientID:     deps.Config.OIDCClientID,
+		ClientSecret: deps.Config.OIDCClientSecret,
+		Name:         deps.Config.OIDCName,
 	}
-	authHandler := handlers.NewAuthHandler(deps.UserRepo, deps.Config.JWTSecret, workosClient)
+	authHandler := handlers.NewAuthHandler(deps.UserRepo, deps.Config.JWTSecret, oidcClient)
 	authHandler.SetPublicBaseURL(deps.Config.PublicBaseURL)
 	authHandler.SetSessionTTL(time.Duration(deps.Config.JWTAccessTTLHours) * time.Hour)
+	authHandler.SetNativeEnabled(deps.Config.OIDCNativeEnabled)
 	houseHandler := handlers.NewHouseHandler(deps.HouseRepo, deps.UserRepo, deps.ReliabilityRepo)
 	expenseHandler := handlers.NewExpenseHandler(deps.ExpenseRepo, deps.HouseRepo)
 	noteHandler := handlers.NewNoteHandler(deps.NoteRepo, deps.HouseRepo)
@@ -109,15 +111,16 @@ func NewHandler(deps Dependencies) http.Handler {
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Get("/config", authHandler.Config)
-		r.Get("/workos/authorize", authHandler.WorkOSAuthorize)
-		r.Post("/workos/callback", authHandler.WorkOSCallback)
-		r.Post("/register", authHandler.Register)
-		r.Post("/login", authHandler.Login)
+		r.Get("/oidc/authorize", authHandler.OIDCAuthorize)
+		r.Get("/oidc/callback", authHandler.OIDCCallback)
+		r.Get("/oidc/native", authHandler.OIDCNativeStart)
+		r.Get("/oidc/native/callback", authHandler.OIDCNativeCallback)
+		r.Post("/oidc/exchange", authHandler.OIDCExchange)
 		r.Post("/logout", authHandler.Logout)
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.JWTAuth(deps.Config.JWTSecret, deps.UserRepo))
+		r.Use(middleware.JWTAuth(deps.Config.JWTSecret, deps.UserRepo, authHandler.SessionCookieName()))
 		r.Use(middleware.Idempotency(deps.ReliabilityRepo))
 
 		r.Get("/api/auth/me", authHandler.Me)

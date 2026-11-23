@@ -14,6 +14,7 @@
 FROM ghcr.io/cirruslabs/flutter:3.27.1 AS web-build
 WORKDIR /app
 COPY pubspec.yaml pubspec.lock ./
+COPY packages ./packages
 RUN flutter pub get
 COPY . .
 ARG BUILD_SHA=unknown

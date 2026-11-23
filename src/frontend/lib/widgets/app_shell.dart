@@ -139,7 +139,16 @@ class _AppShellState extends State<AppShell> {
       onAction: (tab) => _openAction(context, app, s, activeHouseId, tab),
       onSettings: () => context.go('/settings'),
       onLogout: () async {
-        final logoutUrl = await app.logout();
+        final String? logoutUrl;
+        try {
+          logoutUrl = await app.logout();
+        } catch (_) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(s.logoutFailed)));
+          }
+          return;
+        }
         if (logoutUrl != null && kIsWeb) {
           openExternalUrl(logoutUrl);
           return;
@@ -158,9 +167,11 @@ class _AppShellState extends State<AppShell> {
     );
 
     if (wide) {
-      return Material(
-        color: RoomiesPalette.of(context).canvas,
-        child: RoomiesAtmosphere(
+      // Scaffold (not bare Material) so snackbars have somewhere to show.
+      return Scaffold(
+        backgroundColor: RoomiesPalette.of(context).canvas,
+        resizeToAvoidBottomInset: false,
+        body: RoomiesAtmosphere(
           child: SafeArea(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,

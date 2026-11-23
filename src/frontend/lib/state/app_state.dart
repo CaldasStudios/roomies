@@ -148,10 +148,20 @@ class AppState extends ChangeNotifier {
     return house;
   }
 
-  /// Destination after a restored session (not a fresh AuthKit/password login).
+  /// `auth_error` code the backend put on the web redirect, shown once on the
+  /// login screen.
+  String? authError;
+
+  /// Invitation token saved before sign-in; sends the next landing to accept it.
+  String? pendingInvitation;
+
+  /// Destination after a restored session (not a fresh sign-in).
   /// Returns `null` for fresh logins so the caller can force `/dashboard`.
   String? restoredHomePath() {
     if (!restoredExistingSession) return null;
+    if (pendingInvitation != null && pendingInvitation!.isNotEmpty) {
+      return '/accept-invitation';
+    }
     final id = defaultHouseId;
     if (id == null || id.isEmpty) return '/dashboard';
     if (houses.isNotEmpty && houses.every((house) => house.id != id)) {
@@ -202,6 +212,7 @@ class AppState extends ChangeNotifier {
         restoredExistingSession = false;
       }
     }
+    if (user != null) pendingInvitation = await api.loadPendingInvitation();
     sessionReady = true;
     notifyListeners();
   }
@@ -209,6 +220,7 @@ class AppState extends ChangeNotifier {
   Future<void> setUser(User? value) async {
     user = value;
     restoredExistingSession = false;
+    pendingInvitation = null;
     if (value != null) {
       await refreshHouses();
     } else {
@@ -217,14 +229,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Signs out locally. Returns the hosted AuthKit logout URL when the
-  /// session came from AuthKit; callers should open it so the WorkOS session
+  /// Signs out. Throws (keeping the session) if the server did not confirm.
+  /// Returns the provider's end-session URL when the
+  /// server reports one; callers should open it so the provider session
   /// ends too and the next sign-in can pick a different account.
   Future<String?> logout() async {
-    final logoutUrl = await api.logout();
+    final logoutUrl = await api.logout(strict: true);
     user = null;
     houses = const [];
     restoredExistingSession = false;
+    pendingInvitation = null;
     notifyListeners();
     return logoutUrl;
   }

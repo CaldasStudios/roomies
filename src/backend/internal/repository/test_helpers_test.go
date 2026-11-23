@@ -25,8 +25,8 @@ func seedHouseFixture(t *testing.T, repo *ReliabilityRepository) (houseID, admin
 	t.Helper()
 	adminID = "user-admin"
 	houseID = "house-1"
-	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, password_hash, created_at) VALUES
-		('user-admin', 'Admin', 'admin@example.com', 'hash', CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_issuer, auth_subject, created_at) VALUES
+		('user-admin', 'Admin', 'admin@example.com', 'https://issuer.test', 'sub-admin', CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.db.Exec(`INSERT INTO houses (id, name, created_at) VALUES ('house-1', 'Test House', CURRENT_TIMESTAMP)`); err != nil {

@@ -253,19 +253,19 @@ class AuthResponse {
 
 class AuthConfig {
   AuthConfig({
-    required this.authkit,
-    required this.password,
-    this.redirectUri = '',
+    required this.oidc,
+    required this.oidcName,
+    this.oidcNative = false,
   });
 
-  final bool authkit;
-  final bool password;
-  final String redirectUri;
+  final bool oidc;
+  final String oidcName;
+  final bool oidcNative;
 
   factory AuthConfig.fromJson(Map<String, dynamic> json) => AuthConfig(
-        authkit: json['authkit'] as bool? ?? false,
-        password: json['password'] as bool? ?? true,
-        redirectUri: json['redirect_uri'] as String? ?? '',
+        oidc: json['oidc'] as bool? ?? false,
+        oidcName: json['oidc_name'] as String? ?? '',
+        oidcNative: json['oidc_native'] as bool? ?? false,
       );
 }
 

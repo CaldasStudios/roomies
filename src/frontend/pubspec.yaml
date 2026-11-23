@@ -43,6 +43,8 @@ dependencies:
   http: ^1.6.0
   shared_preferences: ^2.5.3
   provider: ^6.1.5+1
+  crypto: ^3.0.6
+  flutter_web_auth_2: ^4.1.0
   intl: any
 
 dev_dependencies:
@@ -55,6 +57,13 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+
+# flutter_web_auth_2 hard-depends on desktop_webview_window, whose Linux plugin
+# links WebKitGTK; the stub keeps that out (see its pubspec). Sign-in is not
+# offered on desktop, so the embedded webview is never used.
+dependency_overrides:
+  desktop_webview_window:
+    path: packages/desktop_webview_window
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

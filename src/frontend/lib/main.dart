@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'api/api_client.dart';
@@ -27,16 +28,19 @@ Future<void> main() async {
 }
 
 class RoomiesApp extends StatefulWidget {
-  const RoomiesApp({super.key, required this.appState});
+  const RoomiesApp({super.key, required this.appState, this.router});
 
   final AppState appState;
+
+  /// Overrides the default router (tests).
+  final GoRouter? router;
 
   @override
   State<RoomiesApp> createState() => _RoomiesAppState();
 }
 
 class _RoomiesAppState extends State<RoomiesApp> {
-  late final _router = createRouter(widget.appState);
+  late final _router = widget.router ?? createRouter(widget.appState);
 
   @override
   Widget build(BuildContext context) {

@@ -58,14 +58,15 @@ func TestInvitationCreateIdempotentReplayRedactsOneTimeToken(t *testing.T) {
 		}
 	}
 
+	// Counted for this house only: TEST_DATABASE_URL can share one database.
 	var inviteCount, jobCount, outboxCount int
-	if err := env.DB.Get(&inviteCount, `SELECT COUNT(*) FROM house_invitations`); err != nil {
+	if err := env.DB.Get(&inviteCount, `SELECT COUNT(*) FROM house_invitations WHERE house_id = $1`, houseID); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.DB.Get(&jobCount, `SELECT COUNT(*) FROM durable_jobs WHERE dedupe_key LIKE 'job:outbox:invitation:%'`); err != nil {
+	if err := env.DB.Get(&jobCount, `SELECT COUNT(*) FROM durable_jobs WHERE dedupe_key IN (SELECT 'job:outbox:invitation:' || id FROM house_invitations WHERE house_id = $1)`, houseID); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.DB.Get(&outboxCount, `SELECT COUNT(*) FROM outbox_messages WHERE topic = 'house.invitation.created'`); err != nil {
+	if err := env.DB.Get(&outboxCount, `SELECT COUNT(*) FROM outbox_messages WHERE topic = 'house.invitation.created' AND dedupe_key IN (SELECT 'outbox:invitation:' || id FROM house_invitations WHERE house_id = $1)`, houseID); err != nil {
 		t.Fatal(err)
 	}
 	if inviteCount != 1 || jobCount != 1 || outboxCount != 1 {

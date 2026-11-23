@@ -18,6 +18,7 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
   var _loading = false;
   var _attempted = false;
   var _retryable = false;
+  var _terminal = false;
   String? _status;
 
   @override
@@ -28,8 +29,9 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
 
   Future<void> _bootstrap() async {
     final app = context.read<AppState>();
-    if (widget.initialToken != null && widget.initialToken!.isNotEmpty) {
-      await app.api.savePendingInvitation(widget.initialToken!);
+    final initial = widget.initialToken?.trim() ?? '';
+    if (initial.isNotEmpty) {
+      await app.api.savePendingInvitation(initial);
       if (mounted) context.go('/accept-invitation');
     }
     if (!app.api.isAuthenticated) {
@@ -47,10 +49,13 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
       _loading = true;
       _status = app.strings.joiningHouse;
     });
-    final token = await app.api.loadPendingInvitation();
-    if (token == null || token.isEmpty) {
+    final token = (await app.api.loadPendingInvitation())?.trim() ?? '';
+    if (token.isEmpty) {
+      await app.api.clearPendingInvitation();
+      app.pendingInvitation = null;
       setState(() {
         _loading = false;
+        _terminal = true;
         _status = app.strings.invitationMissing;
       });
       return;
@@ -58,6 +63,7 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
     try {
       final response = await app.api.acceptInvitation(token);
       await app.api.clearPendingInvitation();
+      app.pendingInvitation = null;
       setState(() {
         _loading = false;
         _status = app.strings.invitationJoined;
@@ -70,9 +76,20 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
         context.go('/');
         return;
       }
+      final dead = error.status == 400 ||
+          error.status == 403 ||
+          error.status == 404 ||
+          error.status == 410;
+      if (dead) {
+        // The invitation can never succeed: forget it so it stops redirecting.
+        await app.api.clearPendingInvitation();
+        app.pendingInvitation = null;
+      }
+      if (!mounted) return;
       setState(() {
         _loading = false;
-        _retryable = true;
+        _retryable = !dead;
+        _terminal = dead;
         _status = app.strings.invitationFailed(error.message);
       });
     } catch (error) {
@@ -105,6 +122,13 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
               style: Theme.of(context).textTheme.bodyLarge,
             ),
           ),
+          if (_terminal) ...[
+            const SizedBox(height: 16),
+            RoomiesPrimaryButton(
+              label: s.continueToDashboard,
+              onPressed: () => context.go('/dashboard'),
+            ),
+          ],
           if (_retryable) ...[
             const SizedBox(height: 16),
             RoomiesPrimaryButton(
