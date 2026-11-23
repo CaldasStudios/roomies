@@ -28,6 +28,8 @@ x-backend: &backend
     OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-roomies-dev}
     OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
     OIDC_NAME: ${OIDC_NAME:-}
+    # On here so local Android builds can sign in; off by default elsewhere.
+    OIDC_NATIVE_ENABLED: ${OIDC_NATIVE_ENABLED:-true}
     SMTP_HOST: ${SMTP_HOST:-}
     SMTP_PORT: ${SMTP_PORT:-1025}
     SMTP_USERNAME: ${SMTP_USERNAME:-}

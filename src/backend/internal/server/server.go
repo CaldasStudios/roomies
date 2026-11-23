@@ -54,6 +54,7 @@ func NewHandler(deps Dependencies) http.Handler {
 	authHandler := handlers.NewAuthHandler(deps.UserRepo, deps.Config.JWTSecret, oidcClient)
 	authHandler.SetPublicBaseURL(deps.Config.PublicBaseURL)
 	authHandler.SetSessionTTL(time.Duration(deps.Config.JWTAccessTTLHours) * time.Hour)
+	authHandler.SetNativeEnabled(deps.Config.OIDCNativeEnabled)
 	houseHandler := handlers.NewHouseHandler(deps.HouseRepo, deps.UserRepo, deps.ReliabilityRepo)
 	expenseHandler := handlers.NewExpenseHandler(deps.ExpenseRepo, deps.HouseRepo)
 	noteHandler := handlers.NewNoteHandler(deps.NoteRepo, deps.HouseRepo)

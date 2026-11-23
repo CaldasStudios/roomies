@@ -28,7 +28,7 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
-	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+	if strings.EqualFold(via[len(via)-1].URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
 		return errors.New("refusing redirect from https to http")
 	}
 	return nil
@@ -80,10 +80,17 @@ func (c *Client) discover(ctx context.Context) (*oidc.Provider, error) {
 	return p, nil
 }
 
+// IsHTTPS reports whether raw parses as a URL with an https scheme, in any
+// letter case. The raw string itself is never rewritten.
+func IsHTTPS(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && strings.EqualFold(u.Scheme, "https")
+}
+
 // requireHTTPSEndpoints refuses an https issuer whose discovery document sends
 // codes, tokens, keys, or logout hints over plain http.
 func requireHTTPSEndpoints(issuer string, p *oidc.Provider) error {
-	if !strings.HasPrefix(issuer, "https://") {
+	if !IsHTTPS(issuer) {
 		return nil
 	}
 	var meta struct {
@@ -101,7 +108,7 @@ func requireHTTPSEndpoints(issuer string, p *oidc.Provider) error {
 		"userinfo_endpoint":      p.UserInfoEndpoint(),
 		"end_session_endpoint":   meta.EndSession,
 	} {
-		if value != "" && !strings.HasPrefix(value, "https://") {
+		if value != "" && !IsHTTPS(value) {
 			return fmt.Errorf("%s is not https", name)
 		}
 	}

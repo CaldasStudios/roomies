@@ -117,9 +117,11 @@ func oidcAuthSubjectStatements(driver string) []string {
 	return append(statements,
 		// A subject is only unique within its issuer.
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_identity ON users(auth_issuer, auth_subject)`,
-		// Provider ID tokens kept server-side as the logout hint, one per session.
+		// Provider ID tokens kept server-side as the logout hint, one per
+		// session, with the issuer that minted them.
 		`CREATE TABLE IF NOT EXISTS session_id_tokens (
 			jti TEXT PRIMARY KEY,
+			issuer TEXT NOT NULL,
 			id_token TEXT NOT NULL,
 			expires_at TIMESTAMP NOT NULL
 		)`,

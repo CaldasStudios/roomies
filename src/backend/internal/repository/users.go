@@ -64,34 +64,39 @@ func (r *UserRepository) SessionActive(ctx context.Context, userID, jti string) 
 	return count > 0, err
 }
 
-// RevokeSession blocks a session token until it would have expired anyway.
-func (r *UserRepository) RevokeSession(ctx context.Context, jti string, expiresAt time.Time) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO revoked_sessions (jti, expires_at) VALUES ($1, $2)
-		ON CONFLICT (jti) DO NOTHING`, jti, expiresAt.UTC())
+// SaveSessionIDToken keeps the provider ID token of session jti, and the
+// issuer that minted it, as the session's logout hint until it expires.
+func (r *UserRepository) SaveSessionIDToken(ctx context.Context, jti, issuer, idToken string, expiresAt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO session_id_tokens (jti, issuer, id_token, expires_at) VALUES ($1, $2, $3, $4)`,
+		jti, issuer, idToken, expiresAt.UTC())
 	return err
 }
 
-// SaveSessionIDToken keeps the provider ID token of session jti as its logout
-// hint until the session expires.
-func (r *UserRepository) SaveSessionIDToken(ctx context.Context, jti, idToken string, expiresAt time.Time) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO session_id_tokens (jti, id_token, expires_at) VALUES ($1, $2, $3)`,
-		jti, idToken, expiresAt.UTC())
-	return err
-}
-
-// TakeSessionIDToken returns and deletes the logout hint of session jti, or
-// "" when there is none.
-func (r *UserRepository) TakeSessionIDToken(ctx context.Context, jti string) (string, error) {
-	var idToken string
-	err := r.db.GetContext(ctx, &idToken, `SELECT id_token FROM session_id_tokens WHERE jti = $1`, jti)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
+// EndSession revokes session jti until it would have expired anyway and takes
+// its logout hint, in one transaction: on error neither happens, so a retry
+// still finds the hint. issuer and idToken are "" when there is no hint.
+func (r *UserRepository) EndSession(ctx context.Context, jti string, expiresAt time.Time) (issuer, idToken string, err error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	_, err = r.db.ExecContext(ctx, `DELETE FROM session_id_tokens WHERE jti = $1`, jti)
-	return idToken, err
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO revoked_sessions (jti, expires_at) VALUES ($1, $2)
+		ON CONFLICT (jti) DO NOTHING`, jti, expiresAt.UTC()); err != nil {
+		return "", "", err
+	}
+	var hint struct {
+		Issuer  string `db:"issuer"`
+		IDToken string `db:"id_token"`
+	}
+	err = tx.GetContext(ctx, &hint, `DELETE FROM session_id_tokens WHERE jti = $1 RETURNING issuer, id_token`, jti)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", "", err
+	}
+	return hint.Issuer, hint.IDToken, nil
 }
 
 // PurgeExpiredSessionIDTokens drops logout hints of expired sessions.

@@ -29,6 +29,7 @@ x-backend: &backend
     OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
     OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
     OIDC_NAME: ${OIDC_NAME:-}
+    OIDC_NATIVE_ENABLED: ${OIDC_NATIVE_ENABLED:-false}
   volumes:
     - tls:/tls:ro
   depends_on:
@@ -109,6 +110,7 @@ ROOMIES_PUBLIC_BASE_URL=https://roomies.example.com   # bare origin; app at /app
 # OIDC_CLIENT_ID=roomies
 # OIDC_CLIENT_SECRET=                                 # blank for a public client
 # OIDC_NAME=Sign in                                   # sign-in button label
+# OIDC_NATIVE_ENABLED=false                           # Android sign-in, see below
 ```
 
 **3. Start it:**
@@ -124,7 +126,7 @@ Optional backend variables (email invitations, Web Push, FCM) are listed with co
 
 **Encryption in transit.** Browsers and apps reach Caddy over HTTPS when `SITE_ADDRESS` is a domain (HSTS is sent). Between containers, `tls-init` issues a private CA (kept across restarts, key readable by root only): Caddy reaches the API, and the API and worker reach PostgreSQL, over TLS with certificate checks; PostgreSQL rejects plaintext TCP connections. Invitation email requires STARTTLS or TLS (`SMTP_TLS`). Using an external PostgreSQL? Point `DATABASE_URL` at it with `sslmode=verify-full` (plus `sslrootcert=` for a private CA); production refuses any weaker mode, since only `verify-full` checks the server's certificate and hostname.
 
-**OpenID Connect sign-in.** Sign-in works with any OpenID Connect provider. Without `OIDC_ISSUER` and `OIDC_CLIENT_ID`, sign-in is off. Set `OIDC_ISSUER` to the provider's issuer URL and `OIDC_CLIENT_ID` to your client. Set `OIDC_CLIENT_SECRET` for a confidential client, or leave it blank for a public client. `OIDC_NAME` sets the sign-in button label.
+**OpenID Connect sign-in.** Sign-in works with any OpenID Connect provider. Without `OIDC_ISSUER` and `OIDC_CLIENT_ID`, sign-in is off. Set `OIDC_ISSUER` to the provider's issuer URL and `OIDC_CLIENT_ID` to your client. Set `OIDC_CLIENT_SECRET` for a confidential client, or leave it blank for a public client. `OIDC_NAME` sets the sign-in button label. `OIDC_NATIVE_ENABLED=true` enables Android sign-in through a custom-scheme callback, which another installed app could intercept; enable it only if you accept that.
 
 At the provider, register:
 

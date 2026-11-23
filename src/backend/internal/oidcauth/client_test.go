@@ -53,9 +53,9 @@ func TestDiscoveryFailureIsRetried(t *testing.T) {
 	}
 }
 
-// discoveryServer serves a discovery document whose endpoints sit under
-// endpointBase; issuer is filled in once the server URL is known.
-func discoveryServer(t *testing.T, tls bool, issuerSuffix string, endpointBase func(self string) string) (*httptest.Server, string) {
+// discoveryServer serves a discovery document advertising issuerOf(server
+// URL) as the issuer, with endpoints under endpointBase(issuer without "/").
+func discoveryServer(t *testing.T, tls bool, issuerOf func(serverURL string) string, endpointBase func(self string) string) (*httptest.Server, string) {
 	t.Helper()
 	var issuer string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,12 +77,12 @@ func discoveryServer(t *testing.T, tls bool, issuerSuffix string, endpointBase f
 		t.Cleanup(func() { httpClient = trust })
 	}
 	t.Cleanup(server.Close)
-	issuer = server.URL + issuerSuffix
+	issuer = issuerOf(server.URL)
 	return server, issuer
 }
 
 func TestIssuerWithTrailingSlashMatchesDiscovery(t *testing.T) {
-	_, issuer := discoveryServer(t, false, "/", func(self string) string { return self })
+	_, issuer := discoveryServer(t, false, func(u string) string { return u + "/" }, func(self string) string { return self })
 	c := &Client{Issuer: issuer, ClientID: "roomies"}
 	if _, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false); err != nil {
 		t.Fatalf("issuer %q: %v", issuer, err)
@@ -90,7 +90,7 @@ func TestIssuerWithTrailingSlashMatchesDiscovery(t *testing.T) {
 }
 
 func TestHTTPSIssuerRequiresHTTPSEndpoints(t *testing.T) {
-	_, issuer := discoveryServer(t, true, "", func(self string) string { return strings.Replace(self, "https://", "http://", 1) })
+	_, issuer := discoveryServer(t, true, sameURL, func(self string) string { return strings.Replace(self, "https://", "http://", 1) })
 	c := &Client{Issuer: issuer, ClientID: "roomies"}
 	_, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false)
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "is not https") {
@@ -116,10 +116,31 @@ func TestHTTPSDiscoveryRefusesRedirectToHTTP(t *testing.T) {
 }
 
 func TestForceLoginAddsPrompt(t *testing.T) {
-	_, issuer := discoveryServer(t, false, "", func(self string) string { return self })
+	_, issuer := discoveryServer(t, false, sameURL, func(self string) string { return self })
 	c := &Client{Issuer: issuer, ClientID: "roomies"}
 	authURL, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", true)
 	if err != nil || !strings.Contains(authURL, "prompt=login") {
 		t.Fatalf("authURL = %q, %v", authURL, err)
 	}
 }
+
+func TestMixedCaseHTTPSIssuerStillRequiresHTTPSEndpoints(t *testing.T) {
+	for name, tc := range map[string]struct {
+		endpoints func(self string) string
+		ok        bool
+	}{
+		"https endpoints": {func(self string) string { return self }, true},
+		"http endpoints":  {func(self string) string { return "http://" + strings.SplitN(self, "://", 2)[1] }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, issuer := discoveryServer(t, true, func(u string) string { return "HTTPS://" + strings.TrimPrefix(u, "https://") }, tc.endpoints)
+			c := &Client{Issuer: issuer, ClientID: "roomies"}
+			_, err := c.AuthURL(t.Context(), "https://roomies.test/cb", "s", "c", "n", false)
+			if (err == nil) != tc.ok {
+				t.Fatalf("issuer %q: err = %v", issuer, err)
+			}
+		})
+	}
+}
+
+func sameURL(u string) string { return u }

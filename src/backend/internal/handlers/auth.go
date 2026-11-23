@@ -64,6 +64,7 @@ type AuthHandler struct {
 	publicBaseURL string
 	limiter       *middleware.WindowLimiter
 	callbackLimit int
+	nativeEnabled bool
 	sessionTTL    time.Duration
 	appCodes      *appCodeStore
 }
@@ -100,15 +101,32 @@ func (h *AuthHandler) SetRateLimit(limit int) {
 	h.callbackLimit = limit
 }
 
+// SetNativeEnabled turns on Android sign-in. Its custom-scheme callback can be
+// intercepted by another installed app claiming the same scheme, so it is
+// off unless the operator opts in.
+func (h *AuthHandler) SetNativeEnabled(enabled bool) {
+	h.nativeEnabled = enabled
+}
+
 func (h *AuthHandler) Config(w http.ResponseWriter, r *http.Request) {
 	name := ""
 	if h.oidc != nil {
 		name = h.oidc.Name
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"oidc":      h.oidc.Enabled(),
-		"oidc_name": name,
+		"oidc":        h.oidc.Enabled(),
+		"oidc_name":   name,
+		"oidc_native": h.oidc.Enabled() && h.nativeEnabled,
 	})
+}
+
+// nativeDisabled answers 404 for the Android routes when they are off.
+func (h *AuthHandler) nativeDisabled(w http.ResponseWriter) bool {
+	if h.nativeEnabled {
+		return false
+	}
+	writeJSON(w, http.StatusNotFound, models.ErrorResponse{Error: "not found"})
+	return true
 }
 
 func (h *AuthHandler) oidcDisabled(w http.ResponseWriter) bool {
@@ -160,7 +178,7 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 // OIDCNativeStart starts Android sign-in in a browser tab. The server stays
 // the OIDC client; the app proves itself later with its own PKCE verifier.
 func (h *AuthHandler) OIDCNativeStart(w http.ResponseWriter, r *http.Request) {
-	if h.oidcDisabled(w) {
+	if h.nativeDisabled(w) || h.oidcDisabled(w) {
 		return
 	}
 	appChallenge := r.URL.Query().Get("app_challenge")
@@ -182,7 +200,7 @@ func (h *AuthHandler) OIDCNativeStart(w http.ResponseWriter, r *http.Request) {
 // OIDCNativeCallback finishes Android sign-in and hands the app a short-lived,
 // single-use code bound to its PKCE challenge.
 func (h *AuthHandler) OIDCNativeCallback(w http.ResponseWriter, r *http.Request) {
-	if h.oidcDisabled(w) {
+	if h.nativeDisabled(w) || h.oidcDisabled(w) {
 		return
 	}
 	if !h.allow(w, r, "oidc_native_callback", h.callbackLimit) {
@@ -216,7 +234,7 @@ type oidcExchangeRequest struct {
 
 // OIDCExchange trades the app code and the app's PKCE verifier for a session.
 func (h *AuthHandler) OIDCExchange(w http.ResponseWriter, r *http.Request) {
-	if h.oidcDisabled(w) {
+	if h.nativeDisabled(w) || h.oidcDisabled(w) {
 		return
 	}
 	if !h.allow(w, r, "oidc_exchange", h.callbackLimit) {
@@ -311,7 +329,7 @@ func (h *AuthHandler) clearOIDCCookies(w http.ResponseWriter, r *http.Request, n
 // cookieName gives HttpOnly auth cookies the __Host- prefix on an https
 // deployment so a sibling subdomain cannot plant them.
 func (h *AuthHandler) cookieName(name string) string {
-	return middleware.CookieName(name, strings.HasPrefix(h.publicBaseURL, "https://"))
+	return middleware.CookieName(name, oidcauth.IsHTTPS(h.publicBaseURL))
 }
 
 // SessionCookieName is this deployment's session cookie name; the session
@@ -324,27 +342,23 @@ func (h *AuthHandler) SessionCookieName() string {
 // returns the provider logout URL so the client can end that session too;
 // otherwise the next "Sign in" would silently reuse the old account.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	claims := h.sessionClaims(r)
-	idTokenHint := ""
-	if claims != nil {
-		if jti, _ := claims["jti"].(string); jti != "" {
-			hint, err := h.userRepo.TakeSessionIDToken(r.Context(), jti)
+	logoutURL := ""
+	// Revoke the token itself: clearing the cookie alone would leave a copied
+	// token (or a native app's bearer) usable until it expires. The logout
+	// hint is taken in the same transaction, so a failure leaves both for a
+	// retry.
+	if claims := h.sessionClaims(r); claims != nil {
+		jti, _ := claims["jti"].(string)
+		if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && jti != "" {
+			issuer, idTokenHint, err := h.userRepo.EndSession(r.Context(), jti, exp.Time)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, models.ErrorResponse{Error: "failed to end session"})
 				return
 			}
-			idTokenHint = hint
-		}
-	}
-	logoutURL := h.oidc.LogoutURL(r.Context(), idTokenHint, h.publicBaseURL+"/")
-	// Revoke the token itself: clearing the cookie alone would leave a copied
-	// token (or a native app's bearer) usable until it expires.
-	if claims != nil {
-		jti, _ := claims["jti"].(string)
-		if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && jti != "" {
-			if err := h.userRepo.RevokeSession(r.Context(), jti, exp.Time); err != nil {
-				writeJSON(w, http.StatusInternalServerError, models.ErrorResponse{Error: "failed to end session"})
-				return
+			// A hint minted by another issuer (the configuration changed
+			// since sign-in) must not be sent to the current provider.
+			if h.oidc.Enabled() && issuer == h.oidc.Issuer {
+				logoutURL = h.oidc.LogoutURL(r.Context(), idTokenHint, h.publicBaseURL+"/")
 			}
 		}
 	}
@@ -392,7 +406,8 @@ func (h *AuthHandler) generateToken(ctx context.Context, user *models.User, idTo
 	}
 	expires := time.Now().Add(h.sessionTTL)
 	if idToken != "" {
-		if err := h.userRepo.SaveSessionIDToken(ctx, jti, idToken, expires); err != nil {
+		// go-oidc verified the token's iss equals the configured issuer.
+		if err := h.userRepo.SaveSessionIDToken(ctx, jti, h.oidc.Issuer, idToken, expires); err != nil {
 			return "", err
 		}
 	}
@@ -447,7 +462,7 @@ func (h *AuthHandler) secureCookie(r *http.Request) bool {
 		return true
 	}
 	parsed, err := url.Parse(h.publicBaseURL)
-	return err == nil && parsed.Scheme == "https"
+	return err == nil && strings.EqualFold(parsed.Scheme, "https")
 }
 
 func newOAuthTransaction() (state, verifier, challenge string, err error) {

@@ -54,6 +54,7 @@ type Config struct {
 	OIDCClientID                string
 	OIDCClientSecret            string
 	OIDCName                    string
+	OIDCNativeEnabled           bool
 	JWTAccessTTLHours           int
 }
 
@@ -92,6 +93,7 @@ func Load() *Config {
 		OIDCClientID:                strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
 		OIDCClientSecret:            strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
 		OIDCName:                    getEnv("OIDC_NAME", "CaldasStudios"),
+		OIDCNativeEnabled:           getEnvBool("OIDC_NATIVE_ENABLED"),
 		JWTAccessTTLHours:           getEnvInt("JWT_ACCESS_TTL_HOURS", 8),
 	}
 }
@@ -227,6 +229,12 @@ func splitCSV(value string) []string {
 		}
 	}
 	return result
+}
+
+// getEnvBool is true only for a value strconv.ParseBool reads as true.
+func getEnvBool(key string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && parsed
 }
 
 func getEnvInt(key string, fallback int) int {

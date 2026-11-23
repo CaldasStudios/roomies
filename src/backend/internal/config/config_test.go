@@ -172,3 +172,14 @@ func TestLoadKeepsIssuerVerbatim(t *testing.T) {
 		t.Fatalf("OIDCIssuer = %q", got)
 	}
 }
+
+func TestNativeSignInIsOptIn(t *testing.T) {
+	t.Setenv("OIDC_NATIVE_ENABLED", "")
+	if Load().OIDCNativeEnabled {
+		t.Fatal("native sign-in enabled by default")
+	}
+	t.Setenv("OIDC_NATIVE_ENABLED", "true")
+	if !Load().OIDCNativeEnabled {
+		t.Fatal("OIDC_NATIVE_ENABLED=true ignored")
+	}
+}

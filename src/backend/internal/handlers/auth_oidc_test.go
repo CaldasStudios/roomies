@@ -121,6 +121,7 @@ func (f *fakeOIDC) wantEmail() string { return strings.ToLower(f.email) }
 func (f *fakeOIDC) handler(env *testEnv) *handlers.AuthHandler {
 	h := handlers.NewAuthHandler(env.UserRepo, env.JWTSecret, &oidcauth.Client{Issuer: f.URL, ClientID: "roomies", ClientSecret: "secret", Name: "Test ID"})
 	h.SetPublicBaseURL(oidcTestBase)
+	h.SetNativeEnabled(true)
 	return h
 }
 
@@ -462,10 +463,10 @@ func TestExpiredSessionIDTokensArePurged(t *testing.T) {
 	defer env.Cleanup()
 	now := time.Now()
 	old, live := models.NewID(), models.NewID()
-	if err := env.UserRepo.SaveSessionIDToken(t.Context(), old, "old.id.token", now.Add(-time.Minute)); err != nil {
+	if err := env.UserRepo.SaveSessionIDToken(t.Context(), old, "https://issuer.test", "old.id.token", now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.UserRepo.SaveSessionIDToken(t.Context(), live, "live.id.token", now.Add(time.Hour)); err != nil {
+	if err := env.UserRepo.SaveSessionIDToken(t.Context(), live, "https://issuer.test", "live.id.token", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := env.UserRepo.PurgeExpiredSessionIDTokens(t.Context(), now); err != nil {
@@ -547,10 +548,10 @@ func TestAuthRoutesWithoutOIDC(t *testing.T) {
 	}
 	config := request(http.MethodGet, "/api/auth/config")
 	var body map[string]any
-	if err := json.Unmarshal(config.Body.Bytes(), &body); err != nil || body["oidc"] != false || len(body) != 2 {
+	if err := json.Unmarshal(config.Body.Bytes(), &body); err != nil || body["oidc"] != false || body["oidc_native"] != false || len(body) != 3 {
 		t.Fatalf("config = %s", config.Body.String())
 	}
-	for _, path := range []string{"/api/auth/oidc/authorize", "/api/auth/oidc/callback?code=c&state=s", "/api/auth/oidc/native?app_challenge=x"} {
+	for _, path := range []string{"/api/auth/oidc/authorize", "/api/auth/oidc/callback?code=c&state=s"} {
 		if w := request(http.MethodGet, path); w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("GET %s status = %d", path, w.Code)
 		}
@@ -561,9 +562,121 @@ func TestAuthRoutesWithoutOIDC(t *testing.T) {
 		{http.MethodGet, "/api/auth/workos/authorize"},
 		{http.MethodPost, "/api/auth/workos/callback"},
 		{http.MethodPost, "/api/auth/oidc/callback"},
+		{http.MethodGet, "/api/auth/oidc/native?app_challenge=x"},
 	} {
 		if w := request(route[0], route[1]); w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("%s %s status = %d", route[0], route[1], w.Code)
 		}
+	}
+}
+
+func TestNativeSignInIsOffUnlessEnabled(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	h := newFakeOIDC(t).handler(env)
+	for _, enabled := range []bool{false, true} {
+		h.SetNativeEnabled(enabled)
+		w := httptest.NewRecorder()
+		h.Config(w, httptest.NewRequest(http.MethodGet, "/api/auth/config", nil))
+		var config map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &config); err != nil || config["oidc"] != true || config["oidc_native"] != enabled {
+			t.Fatalf("native %v: config = %s", enabled, w.Body.String())
+		}
+	}
+	h.SetNativeEnabled(false)
+	for name, route := range map[string]http.HandlerFunc{"native": h.OIDCNativeStart, "native callback": h.OIDCNativeCallback, "exchange": h.OIDCExchange} {
+		w := httptest.NewRecorder()
+		route(w, httptest.NewRequest(http.MethodGet, "/?app_challenge=x&code=c&state=s", strings.NewReader(`{"code":"c","code_verifier":"v"}`)))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s with native sign-in off: status = %d", name, w.Code)
+		}
+	}
+}
+
+func TestMixedCaseHTTPSBaseUsesHostCookies(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	f := newFakeOIDC(t)
+	h := f.handler(env)
+	h.SetPublicBaseURL("HTTPS://roomies.test")
+	cookies, _ := webAuthorize(t, f, h)
+	for _, cookie := range cookies {
+		if !strings.HasPrefix(cookie.Name, "__Host-") || !cookie.Secure {
+			t.Fatalf("cookie on HTTPS:// base = %#v", cookie)
+		}
+	}
+}
+
+// signInSession signs in through f and returns the session cookie and jti.
+func signInSession(t *testing.T, f *fakeOIDC, h *handlers.AuthHandler) (*http.Cookie, string) {
+	t.Helper()
+	session := responseCookie(signInWeb(t, f, h), "__Host-roomies_session")
+	if session == nil {
+		t.Fatal("sign-in did not set a session")
+	}
+	return session, assertNoIDTokenInSession(t, session.Value)
+}
+
+func logout(h *handlers.AuthHandler, session *http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req.AddCookie(session)
+	w := httptest.NewRecorder()
+	h.Logout(w, req)
+	return w
+}
+
+func meStatus(env *testEnv, session *http.Cookie) int {
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(session)
+	w := httptest.NewRecorder()
+	env.Router.ServeHTTP(w, req)
+	return w.Code
+}
+
+func TestLogoutHintFromAnotherIssuerIsNotSent(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	f := newFakeOIDC(t)
+	h := f.handler(env)
+	session, jti := signInSession(t, f, h)
+	if _, err := env.DB.Exec(`UPDATE session_id_tokens SET issuer = 'https://previous.issuer.test' WHERE jti = $1`, jti); err != nil {
+		t.Fatal(err)
+	}
+	if w := logout(h, session); w.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d body = %s", w.Code, w.Body.String())
+	}
+	if meStatus(env, session) != http.StatusUnauthorized || storedIDTokens(t, env, jti) != 0 {
+		t.Fatal("logout did not end the local session")
+	}
+}
+
+func TestFailedLogoutKeepsSessionAndHintForRetry(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.Cleanup()
+	if env.DB.DriverName() != "sqlite3" {
+		t.Skip("breaks a table on purpose; only on a per-test SQLite database")
+	}
+	f := newFakeOIDC(t)
+	h := f.handler(env)
+	session, jti := signInSession(t, f, h)
+	// Hide the hints table so the transaction fails after the revocation.
+	if _, err := env.DB.Exec(`ALTER TABLE session_id_tokens RENAME TO session_id_tokens_hidden`); err != nil {
+		t.Fatal(err)
+	}
+	if w := logout(h, session); w.Code != http.StatusInternalServerError {
+		t.Fatalf("logout with a failing store: status = %d", w.Code)
+	}
+	if _, err := env.DB.Exec(`ALTER TABLE session_id_tokens_hidden RENAME TO session_id_tokens`); err != nil {
+		t.Fatal(err)
+	}
+	if meStatus(env, session) != http.StatusOK || storedIDTokens(t, env, jti) != 1 {
+		t.Fatal("failed logout revoked the session or dropped the hint")
+	}
+	w := logout(h, session)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "id_token_hint") {
+		t.Fatalf("retried logout status = %d body = %s", w.Code, w.Body.String())
+	}
+	if meStatus(env, session) != http.StatusUnauthorized {
+		t.Fatal("retried logout did not revoke the session")
 	}
 }
