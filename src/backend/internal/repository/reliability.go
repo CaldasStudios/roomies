@@ -776,7 +776,7 @@ func BuildInvitationAcceptanceURL(publicBaseURL, token string) (string, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || (base.Path != "" && base.Path != "/") || base.RawQuery != "" || base.Fragment != "" {
 		return "", errors.New("invalid public application origin")
 	}
-	base.Path = "/accept-invitation"
+	base.Path = "/app/accept-invitation"
 	base.RawPath = ""
 	query := url.Values{}
 	query.Set("token", token)
