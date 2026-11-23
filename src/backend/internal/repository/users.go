@@ -72,9 +72,11 @@ func (r *UserRepository) SaveSessionIDToken(ctx context.Context, jti, issuer, id
 	return err
 }
 
-// EndSession revokes session jti until it would have expired anyway and takes
-// its logout hint, in one transaction: on error neither happens, so a retry
-// still finds the hint. issuer and idToken are "" when there is no hint.
+// EndSession revokes session jti until it would have expired anyway and reads
+// its logout hint, in one transaction. The hint stays until the session would
+// have expired (PurgeExpiredSessionIDTokens), so a logout retried after a lost
+// response still ends the provider session. issuer and idToken are "" when
+// there is no hint.
 func (r *UserRepository) EndSession(ctx context.Context, jti string, expiresAt time.Time) (issuer, idToken string, err error) {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -89,7 +91,7 @@ func (r *UserRepository) EndSession(ctx context.Context, jti string, expiresAt t
 		Issuer  string `db:"issuer"`
 		IDToken string `db:"id_token"`
 	}
-	err = tx.GetContext(ctx, &hint, `DELETE FROM session_id_tokens WHERE jti = $1 RETURNING issuer, id_token`, jti)
+	err = tx.GetContext(ctx, &hint, `SELECT issuer, id_token FROM session_id_tokens WHERE jti = $1`, jti)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", "", err
 	}

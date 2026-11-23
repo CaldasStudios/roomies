@@ -170,6 +170,7 @@ class _AppShellState extends State<AppShell> {
       // Scaffold (not bare Material) so snackbars have somewhere to show.
       return Scaffold(
         backgroundColor: RoomiesPalette.of(context).canvas,
+        resizeToAvoidBottomInset: false,
         body: RoomiesAtmosphere(
           child: SafeArea(
             child: Row(

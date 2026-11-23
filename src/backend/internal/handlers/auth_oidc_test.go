@@ -446,8 +446,11 @@ func TestLogoutReturnsProviderLogoutURL(t *testing.T) {
 	if len(strings.Split(q.Get("id_token_hint"), ".")) != 3 || q.Get("post_logout_redirect_uri") != oidcTestBase+"/" || q.Get("client_id") != "roomies" {
 		t.Fatalf("logout query = %v", q)
 	}
-	if storedIDTokens(t, env, jti) != 0 {
-		t.Fatal("logout left the stored hint behind")
+	// A retry after a lost response still gets the provider logout URL.
+	retry := httptest.NewRecorder()
+	h.Logout(retry, req)
+	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), "id_token_hint") {
+		t.Fatalf("retried logout status = %d body = %s", retry.Code, retry.Body.String())
 	}
 	me := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	me.AddCookie(session)
@@ -645,7 +648,7 @@ func TestLogoutHintFromAnotherIssuerIsNotSent(t *testing.T) {
 	if w := logout(h, session); w.Code != http.StatusNoContent {
 		t.Fatalf("logout status = %d body = %s", w.Code, w.Body.String())
 	}
-	if meStatus(env, session) != http.StatusUnauthorized || storedIDTokens(t, env, jti) != 0 {
+	if meStatus(env, session) != http.StatusUnauthorized {
 		t.Fatal("logout did not end the local session")
 	}
 }
