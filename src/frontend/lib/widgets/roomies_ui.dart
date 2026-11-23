@@ -322,9 +322,9 @@ class RoomiesTabPanel extends StatelessWidget {
   }
 }
 
-/// Shared layout for signed-out screens (sign-in, register, AuthKit callback,
+/// Shared layout for signed-out screens (sign-in, sign-in callback,
 /// invitation): centered wordmark, tagline and one block of actions, so the
-/// hand-off to and from hosted AuthKit looks like one flow.
+/// hand-off to and from the sign-in provider looks like one flow.
 class RoomiesAuthFrame extends StatelessWidget {
   const RoomiesAuthFrame({
     super.key,

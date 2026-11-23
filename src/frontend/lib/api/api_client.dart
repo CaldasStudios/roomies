@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../auth/workos_url.dart';
+import '../auth/safe_url.dart';
 import '../models/models.dart';
 import '../services/session_hint_stub.dart'
     if (dart.library.js_interop) '../services/session_hint_web.dart'
@@ -145,8 +145,8 @@ class ApiClient {
     _valid = false;
   }
 
-  /// Clears the session. Returns the hosted AuthKit logout URL when the
-  /// server reports one, so the caller can also end the WorkOS session.
+  /// Clears the session. Returns the provider's end-session URL when the
+  /// server reports one, so the caller can also end the provider session.
   Future<String?> logout() async {
     String? logoutUrl;
     try {
@@ -156,7 +156,7 @@ class ApiClient {
         final body = jsonDecode(response.body);
         if (body is Map && body['logout_url'] is String) {
           final url = body['logout_url'] as String;
-          if (isWorkOSLogoutUrl(url)) logoutUrl = url;
+          if (isSafeNavigationUrl(url)) logoutUrl = url;
         }
       }
     } catch (_) {
@@ -245,15 +245,10 @@ class ApiClient {
     );
   }
 
-  Future<String> workosAuthorizeUrl({String screenHint = 'sign-in'}) async {
+  Future<String> oidcAuthorizeUrl() async {
     final gen = _generation;
     final response = await _http
-        .get(
-          Uri.parse('$baseUrl/auth/workos/authorize').replace(
-            queryParameters: {'screen_hint': screenHint},
-          ),
-          headers: _headers(),
-        )
+        .get(Uri.parse('$baseUrl/auth/oidc/authorize'), headers: _headers())
         .catchError((Object e) => throw ApiError.transport(e.toString()));
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -269,44 +264,17 @@ class ApiClient {
     throw ApiError.http(response.statusCode, response.body);
   }
 
-  Future<AuthResponse> completeWorkOSCallback(String code, String state) async {
-    final gen = _generation;
-    final result = await _send(
-      () => _http.post(
-        Uri.parse('$baseUrl/auth/workos/callback'),
-        headers: _headers(),
-        body: jsonEncode({'code': code, 'state': state}),
-      ),
-      AuthResponse.fromJson,
-      generation: gen,
-    );
-    await _setToken(result.token);
-    return result;
-  }
+  /// URL the system browser opens for the Android sign-in.
+  String oidcNativeUrl(String appChallenge) => Uri.parse('$baseUrl/auth/oidc/native')
+      .replace(queryParameters: {'app_challenge': appChallenge}).toString();
 
-  Future<AuthResponse> register(
-      String name, String email, String password) async {
+  Future<AuthResponse> exchangeOidcCode(String code, String verifier) async {
     final gen = _generation;
     final result = await _send(
       () => _http.post(
-        Uri.parse('$baseUrl/auth/register'),
+        Uri.parse('$baseUrl/auth/oidc/exchange'),
         headers: _headers(),
-        body: jsonEncode({'name': name, 'email': email, 'password': password}),
-      ),
-      AuthResponse.fromJson,
-      generation: gen,
-    );
-    await _setToken(result.token);
-    return result;
-  }
-
-  Future<AuthResponse> login(String email, String password) async {
-    final gen = _generation;
-    final result = await _send(
-      () => _http.post(
-        Uri.parse('$baseUrl/auth/login'),
-        headers: _headers(),
-        body: jsonEncode({'email': email, 'password': password}),
+        body: jsonEncode({'code': code, 'code_verifier': verifier}),
       ),
       AuthResponse.fromJson,
       generation: gen,

@@ -6,6 +6,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
 
 import 'api/api_client.dart';
+import 'auth/auth_error.dart';
 import 'core/datetime_format.dart';
 import 'router.dart';
 import 'state/app_state.dart';
@@ -22,6 +23,7 @@ Future<void> main() async {
   final api = ApiClient(webOrigin: kIsWeb ? Uri.base.origin : null);
   if (!kIsWeb) requireEncryptedApiBase(api.baseUrl);
   final appState = AppState(api, deviceLocales: platformLocaleTags());
+  appState.authError = takeAuthError();
   await appState.restoreSession();
   runApp(RoomiesApp(appState: appState));
 }

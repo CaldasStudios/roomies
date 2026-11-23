@@ -58,6 +58,7 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
     try {
       final response = await app.api.acceptInvitation(token);
       await app.api.clearPendingInvitation();
+      app.pendingInvitation = null;
       setState(() {
         _loading = false;
         _status = app.strings.invitationJoined;

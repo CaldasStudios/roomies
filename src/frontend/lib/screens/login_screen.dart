@@ -4,51 +4,51 @@ import 'package:provider/provider.dart';
 
 import '../api/api_error.dart';
 import '../auth/open_url.dart';
-import '../l10n/strings.dart';
+import '../auth/sign_in.dart';
 import '../models/models.dart';
 import '../state/app_state.dart';
 import '../widgets/roomies_ui.dart';
 
-/// Auth entry — OAuth-first via WorkOS hosted AuthKit when configured.
-///
-/// Scan path: brand → one **Sign in** that hands off to hosted AuthKit
-/// (which also offers sign-up). Password is collapsed and only shown when
-/// AuthKit is unset (local/CI).
+/// Auth entry: one "Continue with {provider}" button. Sign-up happens on the
+/// provider's own pages. Desktop builds only show a note.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.mode});
+
+  /// Overrides the platform-derived sign-in mode (tests).
+  final SignInMode? mode;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _email = TextEditingController();
-  final _password = TextEditingController();
   AuthConfig? _config;
   var _loading = false;
   var _configLoading = true;
   var _configFailed = false;
-  var _showPasswordForm = false;
   String? _error;
+
+  SignInMode get _mode => widget.mode ?? currentSignInMode();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadConfig());
-  }
-
-  @override
-  void dispose() {
-    _email.dispose();
-    _password.dispose();
-    super.dispose();
+    final app = context.read<AppState>();
+    final authError = app.authError;
+    app.authError = null;
+    if (authError != null) {
+      _error = describeAuthErrorCode(authError, app.strings);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_mode != SignInMode.unsupported) _loadConfig();
+    });
   }
 
   Future<void> _loadConfig() async {
     setState(() {
+      if (_configFailed) _error = null;
       _configLoading = true;
       _configFailed = false;
-      _error = null;
     });
     try {
       final config = await context.read<AppState>().api.getAuthConfig();
@@ -56,16 +56,13 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _config = config;
         _configLoading = false;
-        // Always start collapsed — expand only on explicit tap.
-        _showPasswordForm = false;
       });
     } catch (error) {
       if (!mounted) return;
-      // Don't guess a sign-in method (AuthKit may be on); offer a retry.
+      // Don't guess whether sign-in is configured; offer a retry.
       setState(() {
         _configLoading = false;
         _configFailed = true;
-        _showPasswordForm = false;
         _error = describeError(
           error,
           unreachable: context.read<AppState>().strings.serverUnreachable,
@@ -74,33 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _startAuthKit({required String screenHint}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final url = await context
-          .read<AppState>()
-          .api
-          .workosAuthorizeUrl(screenHint: screenHint);
-      openExternalUrl(url);
-    } on ApiError catch (error) {
-      setState(() => _error = describeError(
-            error,
-            unreachable: context.read<AppState>().strings.serverUnreachable,
-          ));
-    } catch (error) {
-      setState(() => _error = describeError(
-            error,
-            unreachable: context.read<AppState>().strings.serverUnreachable,
-          ));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _submitPassword() async {
+  Future<void> _signIn() async {
     setState(() {
       _loading = true;
       _error = null;
@@ -108,7 +79,11 @@ class _LoginScreenState extends State<LoginScreen> {
     final app = context.read<AppState>();
     final navigator = GoRouter.of(context);
     try {
-      final auth = await app.api.login(_email.text, _password.text);
+      if (_mode == SignInMode.web) {
+        openExternalUrl(await app.api.oidcAuthorizeUrl());
+        return;
+      }
+      final auth = await signInNative(app.api);
       await app.setUser(auth.user);
       if (!mounted) return;
       final pending = await app.api.loadPendingInvitation();
@@ -117,16 +92,12 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         navigator.go('/dashboard');
       }
-    } on ApiError catch (error) {
-      setState(() => _error = describeError(
-            error,
-            unreachable: context.read<AppState>().strings.serverUnreachable,
-          ));
+    } on SignInCancelled {
+      // The user backed out of the browser; nothing to report.
     } catch (error) {
-      setState(() => _error = describeError(
-            error,
-            unreachable: context.read<AppState>().strings.serverUnreachable,
-          ));
+      if (mounted) {
+        setState(() => _error = describeSignInError(error, app.strings));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -134,10 +105,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final s = app.strings;
-    final authkit = _config?.authkit == true;
-    final passwordAvailable = _config?.password == true;
+    final s = context.watch<AppState>().strings;
+    final desktop = _mode == SignInMode.unsupported;
 
     return RoomiesAuthFrame(
       strings: s,
@@ -147,123 +116,34 @@ class _LoginScreenState extends State<LoginScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_error != null) RoomiesError(_error!),
-          if (_configLoading)
+          if (desktop)
+            Text(
+              s.signInDesktopNote,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            )
+          else if (_configLoading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 12),
               child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
             )
           else if (_configFailed)
             OutlinedButton(onPressed: _loadConfig, child: Text(s.retry))
-          else if (authkit)
-            // AuthKit's hosted page handles sign-in, sign-up and social
-            // providers, so Roomies shows one entry point.
-            _AuthPrimaryButton(
-              label: _loading ? s.redirecting : s.signIn,
-              onPressed: _loading
-                  ? null
-                  : () => _startAuthKit(screenHint: 'sign-in'),
-            )
-          else if (!_showPasswordForm)
-            OutlinedButton(
-              onPressed: passwordAvailable
-                  ? () => setState(() => _showPasswordForm = true)
-                  : null,
-              child: Text(s.useEmailPassword),
-            )
-          else
-            _MinimalPasswordForm(
-              strings: s,
-              email: _email,
-              password: _password,
-              loading: _loading,
-              onSubmit: _submitPassword,
-              onHide: () => setState(() => _showPasswordForm = false),
-              onRegister: () => context.go('/register'),
+          else if (_config?.oidc == true)
+            FilledButton(
+              onPressed: _loading ? null : _signIn,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+                textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontSize: 16,
+                    ),
+              ),
+              child: Text(_loading
+                  ? s.redirecting
+                  : s.continueWith(_config!.oidcName)),
             ),
         ],
       ),
-    );
-  }
-}
-
-class _AuthPrimaryButton extends StatelessWidget {
-  const _AuthPrimaryButton({required this.label, required this.onPressed});
-
-  final String label;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return FilledButton(
-      onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        minimumSize: const Size.fromHeight(52),
-        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-              fontSize: 16,
-            ),
-      ),
-      child: Text(label),
-    );
-  }
-}
-
-class _MinimalPasswordForm extends StatelessWidget {
-  const _MinimalPasswordForm({
-    required this.strings,
-    required this.email,
-    required this.password,
-    required this.loading,
-    required this.onSubmit,
-    required this.onHide,
-    required this.onRegister,
-  });
-
-  final RoomiesStrings strings;
-  final TextEditingController email;
-  final TextEditingController password;
-  final bool loading;
-  final VoidCallback onSubmit;
-  final VoidCallback onHide;
-  final VoidCallback onRegister;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: email,
-          decoration: InputDecoration(
-            hintText: strings.email,
-            labelText: strings.email,
-          ),
-          keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email],
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: password,
-          decoration: InputDecoration(
-            hintText: strings.password,
-            labelText: strings.password,
-          ),
-          obscureText: true,
-          autofillHints: const [AutofillHints.password],
-          onSubmitted: (_) => onSubmit(),
-        ),
-        const SizedBox(height: 14),
-        _AuthPrimaryButton(
-          label: loading ? strings.loggingIn : strings.login,
-          onPressed: loading ? null : onSubmit,
-        ),
-        Row(
-          children: [
-            TextButton(onPressed: onHide, child: Text(strings.hideEmailPassword)),
-            const Spacer(),
-            TextButton(onPressed: onRegister, child: Text(strings.createAccount)),
-          ],
-        ),
-      ],
     );
   }
 }

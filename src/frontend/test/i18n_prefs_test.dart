@@ -35,7 +35,7 @@ void main() {
     await app.loadPreferences();
     expect(app.localeOverride, isNull);
     expect(app.localeCode, 'es');
-    expect(app.strings.signIn, 'Iniciar sesión');
+    expect(app.strings.continueWith('X'), 'Continuar con X');
   });
 
   test('Spanish strings cover navigation and settings', () {
@@ -58,10 +58,9 @@ void main() {
     expect(es, isNot(equals(pt)));
   });
 
-  test('Portuguese strings cover hosted AuthKit CTA', () {
+  test('Portuguese strings cover the sign-in CTA', () {
     final pt = RoomiesStrings('pt');
-    expect(pt.signIn, 'Entrar');
-    expect(pt.createAccount, 'Criar conta');
+    expect(pt.continueWith('CaldasStudios'), 'Continuar com CaldasStudios');
     expect(pt.settings, 'Configurações');
     expect(pt.dashboard, 'Painel');
     expect(pt.appearance, 'Aparência');
@@ -81,7 +80,7 @@ void main() {
     expect(app.localeCode, 'en');
     await app.setLocaleOverride('pt');
     expect(app.localeCode, 'pt');
-    expect(app.strings.signIn, 'Entrar');
+    expect(app.strings.continueWith('X'), 'Continuar com X');
     await app.setLocaleOverride('es');
     expect(app.localeCode, 'es');
     await app.setLocaleOverride('fr');

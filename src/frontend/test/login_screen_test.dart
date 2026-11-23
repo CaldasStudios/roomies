@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:roomies/api/api_client.dart';
+import 'package:roomies/auth/sign_in.dart';
 import 'package:roomies/screens/login_screen.dart';
 import 'package:roomies/state/app_state.dart';
 import 'package:roomies/theme/roomies_theme.dart';
@@ -12,14 +13,17 @@ import 'package:roomies/theme/roomies_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<void> pumpLogin(WidgetTester tester, http.Client client) async {
+  Future<void> pumpLogin(WidgetTester tester, http.Client client,
+      {SignInMode mode = SignInMode.web, String? authError}) async {
     final appState = AppState(
       ApiClient(baseUrl: 'http://example/api', httpClient: client),
       deviceLocale: 'en-US',
-    )..sessionReady = true;
+    )
+      ..sessionReady = true
+      ..authError = authError;
     final router = GoRouter(
       routes: [
-        GoRoute(path: '/', builder: (_, __) => const LoginScreen()),
+        GoRoute(path: '/', builder: (_, __) => LoginScreen(mode: mode)),
         GoRoute(path: '/settings', builder: (_, __) => const Text('settings')),
       ],
     );
@@ -40,11 +44,11 @@ void main() {
     await pumpLogin(
       tester,
       MockClient((_) async => http.Response(
-            '{"authkit":true,"password":false}',
+            '{"oidc":true,"oidc_name":"CaldasStudios"}',
             200,
           )),
     );
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Continue with CaldasStudios'), findsOneWidget);
     expect(find.text('PT'), findsNothing);
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
@@ -60,17 +64,45 @@ void main() {
         calls++;
         return calls == 1
             ? http.Response('', 502)
-            : http.Response('{"authkit":true,"password":false}', 200);
+            : http.Response('{"oidc":true,"oidc_name":"CaldasStudios"}', 200);
       }),
     );
     expect(find.textContaining("Can't reach Roomies"), findsOneWidget);
     expect(find.text('502'), findsNothing);
-    // No guessed password form while the sign-in method is unknown.
-    expect(find.text('Use email and password'), findsNothing);
+    // No guessed sign-in button while the config is unknown.
+    expect(find.textContaining('Continue with'), findsNothing);
 
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Continue with CaldasStudios'), findsOneWidget);
     expect(find.textContaining("Can't reach Roomies"), findsNothing);
+  });
+
+  testWidgets('desktop shows a note instead of a sign-in button',
+      (tester) async {
+    var calls = 0;
+    await pumpLogin(
+      tester,
+      MockClient((_) async {
+        calls++;
+        return http.Response('{"oidc":true,"oidc_name":"CaldasStudios"}', 200);
+      }),
+      mode: SignInMode.unsupported,
+    );
+    expect(find.textContaining('web and Android'), findsOneWidget);
+    expect(find.textContaining('Continue with'), findsNothing);
+    expect(calls, 0);
+  });
+
+  testWidgets('web redirect auth_error shows a localized message once',
+      (tester) async {
+    await pumpLogin(
+      tester,
+      MockClient((_) async =>
+          http.Response('{"oidc":true,"oidc_name":"CaldasStudios"}', 200)),
+      authError: 'email_unverified',
+    );
+    expect(find.textContaining('Verify your email'), findsOneWidget);
+    expect(find.text('Continue with CaldasStudios'), findsOneWidget);
   });
 }
