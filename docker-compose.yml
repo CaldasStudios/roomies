@@ -23,8 +23,11 @@ x-backend: &backend
     ROOMIES_PUBLIC_BASE_URL: ${ROOMIES_PUBLIC_BASE_URL:-http://localhost:8080}
     CORS_ALLOWED_ORIGINS: ${ROOMIES_PUBLIC_BASE_URL:-http://localhost:8080}
     JWT_SECRET: ${JWT_SECRET:-}
-    WORKOS_API_KEY: ${WORKOS_API_KEY:-}
-    WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:-}
+    # Defaults point at the mock provider below; set all OIDC_* for a real one.
+    OIDC_ISSUER: ${OIDC_ISSUER:-http://oidc.localhost:8090/default}
+    OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-roomies-dev}
+    OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    OIDC_NAME: ${OIDC_NAME:-}
     SMTP_HOST: ${SMTP_HOST:-}
     SMTP_PORT: ${SMTP_PORT:-1025}
     SMTP_USERNAME: ${SMTP_USERNAME:-}
@@ -94,6 +97,22 @@ services:
   worker:
     <<: *backend
     command: ["go", "run", ".", "worker"]
+
+  # Mock OpenID Connect provider for local sign-in. Any username works and
+  # signs in as dev@example.test; for another account enter claims such as
+  # {"email":"bob@example.test","name":"Bob"}. The issuer URL is the same from
+  # the browser and from the backend (network alias, same port).
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    environment:
+      SERVER_PORT: "8090"
+      JSON_CONFIG: '{"interactiveLogin":true,"tokenCallbacks":[{"issuerId":"default","requestMappings":[{"requestParam":"grant_type","match":"*","claims":{"email":"dev@example.test","email_verified":true,"name":"Dev"}}]}]}'
+    ports:
+      - "127.0.0.1:8090:8090"
+    networks:
+      default:
+        aliases: [oidc.localhost]
+    restart: unless-stopped
 
   # Flutter web bundle built from src/frontend, served by Caddy next to the API.
   # After changing the app: docker compose up --build -d web

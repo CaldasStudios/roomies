@@ -12,12 +12,11 @@ func NewID() string {
 }
 
 type User struct {
-	ID           string    `db:"id" json:"id"`
-	Name         string    `db:"name" json:"name"`
-	Email        string    `db:"email" json:"email"`
-	PasswordHash string    `db:"password_hash" json:"-"`
-	WorkOSUserID string    `db:"workos_user_id" json:"-"`
-	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	ID          string    `db:"id" json:"id"`
+	Name        string    `db:"name" json:"name"`
+	Email       string    `db:"email" json:"email"`
+	AuthSubject string    `db:"auth_subject" json:"-"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }
 
 type House struct {
@@ -73,17 +72,6 @@ type Note struct {
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt  time.Time `db:"updated_at" json:"updated_at"`
 	AuthorName string    `db:"author_name" json:"author_name,omitempty"`
-}
-
-type RegisterRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
 }
 
 type AuthResponse struct {

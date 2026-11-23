@@ -107,7 +107,7 @@ func seedNotificationBarrierFixture(t *testing.T, db *sqlx.DB) (*NotificationRep
 	t.Helper()
 	suffix := strings.ToLower(models.NewID())
 	houseID, adminID, memberID := "house-"+suffix, "admin-"+suffix, "member-"+suffix
-	if _, err := db.Exec(`INSERT INTO users(id,name,email,password_hash) VALUES($1,'Admin',$2,'x'),($3,'Member',$4,'x')`, adminID, adminID+"@test", memberID, memberID+"@test"); err != nil {
+	if _, err := db.Exec(`INSERT INTO users(id,name,email,auth_subject) VALUES($1,'Admin',$2,$1),($3,'Member',$4,$3)`, adminID, adminID+"@test", memberID, memberID+"@test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO houses(id,name) VALUES($1,'House')`, houseID); err != nil {

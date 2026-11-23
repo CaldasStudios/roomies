@@ -50,9 +50,10 @@ type Config struct {
 	WebPushSubject              string
 	FCMProjectID                string
 	FCMCredentialsFile          string
-	WorkOSAPIKey                string
-	WorkOSClientID              string
-	WorkOSRedirectURI           string
+	OIDCIssuer                  string
+	OIDCClientID                string
+	OIDCClientSecret            string
+	OIDCName                    string
 	JWTAccessTTLHours           int
 }
 
@@ -87,27 +88,12 @@ func Load() *Config {
 		WebPushSubject:              getEnv("WEB_PUSH_SUBJECT", "mailto:no-reply@roomies.local"),
 		FCMProjectID:                strings.TrimSpace(os.Getenv("FCM_PROJECT_ID")),
 		FCMCredentialsFile:          strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")),
-		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
-		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
-		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		OIDCIssuer:                  strings.TrimRight(strings.TrimSpace(os.Getenv("OIDC_ISSUER")), "/"),
+		OIDCClientID:                strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
+		OIDCClientSecret:            strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
+		OIDCName:                    getEnv("OIDC_NAME", "CaldasStudios"),
 		JWTAccessTTLHours:           getEnvInt("JWT_ACCESS_TTL_HOURS", 8),
 	}
-}
-
-// WorkOSRedirect returns the AuthKit callback URL. Defaults to {PublicBaseURL}/callback.
-func (c *Config) WorkOSRedirect() string {
-	if c.WorkOSRedirectURI != "" {
-		return c.WorkOSRedirectURI
-	}
-	if c.PublicBaseURL == "" {
-		return ""
-	}
-	return strings.TrimRight(c.PublicBaseURL, "/") + "/callback"
-}
-
-// WorkOSEnabled is true when AuthKit API credentials are present.
-func (c *Config) WorkOSEnabled() bool {
-	return c.WorkOSAPIKey != "" && c.WorkOSClientID != "" && c.WorkOSRedirect() != ""
 }
 
 func (c *Config) Validate() error {
@@ -137,13 +123,14 @@ func (c *Config) Validate() error {
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("TLS_CERT_FILE and TLS_KEY_FILE must be provided together")
 	}
-	if (c.WorkOSAPIKey == "") != (c.WorkOSClientID == "") {
-		return errors.New("WORKOS_API_KEY and WORKOS_CLIENT_ID must be provided together")
-	}
-	if c.WorkOSRedirectURI != "" {
-		redirectURL, err := url.Parse(c.WorkOSRedirectURI)
-		if err != nil || (redirectURL.Scheme != "http" && redirectURL.Scheme != "https") || redirectURL.Host == "" {
-			return errors.New("WORKOS_REDIRECT_URI must be an absolute http(s) URL")
+	if c.OIDCIssuer != "" {
+		issuerURL, err := url.Parse(c.OIDCIssuer)
+		if err != nil || (issuerURL.Scheme != "http" && issuerURL.Scheme != "https") || issuerURL.Host == "" {
+			return errors.New("OIDC_ISSUER must be an absolute http(s) URL")
+		}
+		// A plain-HTTP issuer is only for a provider on this machine.
+		if issuerURL.Scheme != "https" && !isLoopbackHost(issuerURL.Hostname()) && !strings.HasSuffix(strings.ToLower(issuerURL.Hostname()), ".localhost") {
+			return errors.New("OIDC_ISSUER must use https unless it is a localhost URL")
 		}
 	}
 	if len(c.CORSAllowedOrigins) == 0 {

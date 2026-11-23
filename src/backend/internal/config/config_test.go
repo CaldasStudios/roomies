@@ -149,3 +149,19 @@ func TestProductionConfigRequiresEncryptedTransport(t *testing.T) {
 		t.Fatalf("expected loopback trial origin to validate: %v", err)
 	}
 }
+
+func TestConfigAllowsPlainHTTPIssuerOnlyOnLocalhost(t *testing.T) {
+	config := &Config{Environment: "test", JWTSecret: "test-secret", CORSAllowedOrigins: []string{"http://localhost"}, Port: "8080", WorkerHealthPort: "8081", PublicBaseURL: "http://localhost", InvitationTTL: 168, JWTAccessTTLHours: 8, JobPollInterval: 2, JobLeaseSeconds: 30}
+	for issuer, ok := range map[string]bool{
+		"https://auth.example.com/api/auth":  true,
+		"http://oidc.localhost:8090/default": true,
+		"http://127.0.0.1:8090":              true,
+		"http://auth.example.com":            false,
+		"auth.example.com":                   false,
+	} {
+		config.OIDCIssuer = issuer
+		if err := config.Validate(); (err == nil) != ok {
+			t.Fatalf("OIDC_ISSUER %q: err = %v", issuer, err)
+		}
+	}
+}

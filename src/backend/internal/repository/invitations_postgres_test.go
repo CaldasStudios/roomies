@@ -164,7 +164,7 @@ func seedPostgresInvitationFixture(t *testing.T, repo *ReliabilityRepository) (h
 		{adminID, adminID + "@example.test"},
 		{inviteeID, inviteeID + "@example.test"},
 	} {
-		if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, password_hash, created_at) VALUES ($1, $2, $3, 'hash', CURRENT_TIMESTAMP)`, user.id, user.id, user.email); err != nil {
+		if _, err := repo.db.Exec(`INSERT INTO users (id, name, email, auth_subject, created_at) VALUES ($1, $2, $3, $1, CURRENT_TIMESTAMP)`, user.id, user.id, user.email); err != nil {
 			t.Fatal(err)
 		}
 	}

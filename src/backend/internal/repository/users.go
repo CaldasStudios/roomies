@@ -4,14 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/roomies/backend/internal/models"
 )
 
-var ErrLocalPasswordAccount = errors.New("email belongs to a local password account")
+// ErrEmailInUse means the email already belongs to a different sign-in subject.
+var ErrEmailInUse = errors.New("email belongs to another account")
 
 type UserRepository struct {
 	db *sqlx.DB
@@ -22,8 +22,8 @@ func NewUserRepository(db *sqlx.DB) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
-	query := `INSERT INTO users (id, name, email, password_hash, workos_user_id, created_at)
-		VALUES (:id, :name, :email, :password_hash, :workos_user_id, :created_at)`
+	query := `INSERT INTO users (id, name, email, auth_subject, created_at)
+		VALUES (:id, :name, :email, :auth_subject, :created_at)`
 	_, err := r.db.NamedExecContext(ctx, query, user)
 	return err
 }
@@ -46,19 +46,13 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.
 	return &user, nil
 }
 
-func (r *UserRepository) GetByWorkOSUserID(ctx context.Context, workosUserID string) (*models.User, error) {
+func (r *UserRepository) GetByAuthSubject(ctx context.Context, subject string) (*models.User, error) {
 	var user models.User
-	err := r.db.GetContext(ctx, &user, "SELECT * FROM users WHERE workos_user_id = $1", workosUserID)
+	err := r.db.GetContext(ctx, &user, "SELECT * FROM users WHERE auth_subject = $1", subject)
 	if err != nil {
 		return nil, err
 	}
 	return &user, nil
-}
-
-func (r *UserRepository) EmailExists(ctx context.Context, email string) (bool, error) {
-	var count int
-	err := r.db.GetContext(ctx, &count, "SELECT COUNT(*) FROM users WHERE email = $1", email)
-	return count > 0, err
 }
 
 // SessionActive reports whether a session token may still be used: its user
@@ -86,17 +80,18 @@ func (r *UserRepository) PurgeExpiredRevocations(ctx context.Context, now time.T
 	return result.RowsAffected()
 }
 
-func (r *UserRepository) LinkWorkOSUser(ctx context.Context, userID, workosUserID, name string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE users SET workos_user_id = $1, name = $2 WHERE id = $3`,
-		workosUserID, name, userID,
-	)
-	return err
-}
-
-func (r *UserRepository) UpsertFromWorkOS(ctx context.Context, workosUserID, email, name string) (*models.User, error) {
-	if user, err := r.GetByWorkOSUserID(ctx, workosUserID); err == nil {
+// UpsertFromOIDC finds the user by sign-in subject, refreshing name and email,
+// or creates one. An email held by another subject is never linked.
+func (r *UserRepository) UpsertFromOIDC(ctx context.Context, subject, email, name string) (*models.User, error) {
+	if user, err := r.GetByAuthSubject(ctx, subject); err == nil {
 		if user.Name != name || user.Email != email {
+			if user.Email != email {
+				if other, err := r.GetByEmail(ctx, email); err == nil && other.ID != user.ID {
+					return nil, ErrEmailInUse
+				} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+			}
 			_, updateErr := r.db.ExecContext(ctx,
 				`UPDATE users SET name = $1, email = $2 WHERE id = $3`,
 				name, email, user.ID,
@@ -112,28 +107,18 @@ func (r *UserRepository) UpsertFromWorkOS(ctx context.Context, workosUserID, ema
 		return nil, err
 	}
 
-	if user, err := r.GetByEmail(ctx, email); err == nil {
-		// Do not link AuthKit identities onto accounts that already have a local password hash.
-		if strings.TrimSpace(user.PasswordHash) != "" {
-			return nil, ErrLocalPasswordAccount
-		}
-		if err := r.LinkWorkOSUser(ctx, user.ID, workosUserID, name); err != nil {
-			return nil, err
-		}
-		user.WorkOSUserID = workosUserID
-		user.Name = name
-		return user, nil
+	if _, err := r.GetByEmail(ctx, email); err == nil {
+		return nil, ErrEmailInUse
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
 	user := &models.User{
-		ID:           models.NewID(),
-		Name:         name,
-		Email:        email,
-		PasswordHash: "",
-		WorkOSUserID: workosUserID,
-		CreatedAt:    time.Now(),
+		ID:          models.NewID(),
+		Name:        name,
+		Email:       email,
+		AuthSubject: subject,
+		CreatedAt:   time.Now(),
 	}
 	if err := r.Create(ctx, user); err != nil {
 		return nil, err

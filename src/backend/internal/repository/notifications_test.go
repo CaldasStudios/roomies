@@ -25,7 +25,7 @@ func newNotificationRepoTest(t *testing.T) (*NotificationRepository, *roomiesclo
 	if err := database.RunMigrations(db); err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO users(id,name,email,password_hash) VALUES('u1','One','one@test','x'),('u2','Two','two@test','x'); INSERT INTO houses(id,name) VALUES('h1','House'); INSERT INTO house_members(id,house_id,user_id,role) VALUES('m1','h1','u1','admin'),('m2','h1','u2','monitor')`)
+	_, err = db.Exec(`INSERT INTO users(id,name,email,auth_subject) VALUES('u1','One','one@test','sub-u1'),('u2','Two','two@test','sub-u2'); INSERT INTO houses(id,name) VALUES('h1','House'); INSERT INTO house_members(id,house_id,user_id,role) VALUES('m1','h1','u1','admin'),('m2','h1','u2','monitor')`)
 	if err != nil {
 		t.Fatal(err)
 	}

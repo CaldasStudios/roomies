@@ -1,17 +1,14 @@
 package handlers_test
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/roomies/backend/internal/handlers"
 	"github.com/roomies/backend/internal/models"
 )
 
@@ -77,25 +74,6 @@ func TestSessionTokensWithoutIDOrExpiryAreRejected(t *testing.T) {
 		if response := authenticatedRequest(t, env.Router, http.MethodGet, "/api/auth/me", token, nil); response.Code != http.StatusUnauthorized {
 			t.Fatalf("%s: expected 401, got %d", name, response.Code)
 		}
-	}
-}
-
-func TestLoginIsRateLimitedPerAccount(t *testing.T) {
-	env := newTestEnv(t)
-	defer env.Cleanup()
-	handler := handlers.NewAuthHandler(env.UserRepo, env.JWTSecret, nil)
-	handler.SetRateLimit(1000)
-	status := 0
-	for attempt := 0; attempt < 11; attempt++ {
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader([]byte(`{"email":"Target@Example.test","password":"guess"}`)))
-		// A different client address every time: the per-IP budget never trips.
-		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:1234", attempt)
-		w := httptest.NewRecorder()
-		handler.Login(w, req)
-		status = w.Code
-	}
-	if status != http.StatusTooManyRequests {
-		t.Fatalf("eleventh guess against one account: status = %d", status)
 	}
 }
 

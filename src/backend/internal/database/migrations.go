@@ -79,7 +79,37 @@ func migrations(driver string) []schemaMigration {
 				`CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions(expires_at)`,
 			),
 		},
+		{
+			version: 11,
+			name:    "oidc_auth_subjects",
+			up:      execStatements(oidcAuthSubjectStatements(driver)...),
+		},
 	}
+}
+
+// oidcAuthSubjectStatements moves sign-in to OpenID Connect subjects. Existing
+// accounts and everything they own are deleted on purpose: password and
+// WorkOS identities cannot be mapped onto provider subjects.
+func oidcAuthSubjectStatements(driver string) []string {
+	statements := []string{
+		`DELETE FROM audit_events`,
+		`DELETE FROM houses`,
+		`DELETE FROM users`,
+		`DELETE FROM revoked_sessions`,
+		`DELETE FROM durable_jobs`,
+		`DELETE FROM outbox_messages`,
+		`DROP INDEX IF EXISTS idx_users_workos_user_id`,
+		`ALTER TABLE users DROP COLUMN workos_user_id`,
+		`ALTER TABLE users DROP COLUMN password_hash`,
+	}
+	if driver == "postgres" {
+		return append(statements, `ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL UNIQUE`)
+	}
+	// SQLite cannot add a UNIQUE column, nor a NOT NULL one without a default.
+	return append(statements,
+		`ALTER TABLE users ADD COLUMN auth_subject TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_subject ON users(auth_subject)`,
+	)
 }
 
 func execStatements(statements ...string) func(context.Context, migrationRunner) error {

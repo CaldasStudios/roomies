@@ -40,7 +40,7 @@ func TestPostgresMigrationsUpgradeLegacyMVP(t *testing.T) {
 	}
 
 	assertCurrentPostgresMigrationState(t, db, "")
-	assertFinancialRecordsPreserved(t, db)
+	assertAccountsWiped(t, db)
 }
 
 func TestPostgresMigrationsUpgradeCentsAndLeaseLessSchema(t *testing.T) {
@@ -70,6 +70,7 @@ func TestPostgresMigrationsUpgradeCentsAndLeaseLessSchema(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO schema_migrations (version, name) VALUES (2, 'monetary_cents_columns')`); err != nil {
 		t.Fatal(err)
 	}
+	assertFinancialRecordsPreserved(t, db)
 	if err := migrations("postgres")[2].up(ctx, db); err != nil {
 		t.Fatalf("apply historical reliability migration: %v", err)
 	}
@@ -95,15 +96,15 @@ func TestPostgresMigrationsUpgradeCentsAndLeaseLessSchema(t *testing.T) {
 		('other-key', 'user-1', 'other-key', 'POST', '/api/houses/house-1/notes', 'hash', 'completed', 201, $2, 'application/json')`, legacyResponse, unrelatedResponse); err != nil {
 		t.Fatalf("seed legacy idempotency responses: %v", err)
 	}
-	if err := RunMigrations(db); err != nil {
-		t.Fatalf("upgrade cents and lease-less schema: %v", err)
+	// Check the redaction before migration 11 deletes every account's data.
+	for _, migration := range migrations("postgres")[3:5] {
+		if err := migration.up(ctx, db); err != nil {
+			t.Fatalf("apply migration %d: %v", migration.version, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, migration.version, migration.name); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := RunMigrations(db); err != nil {
-		t.Fatalf("cents and lease-less upgrade must be idempotent: %v", err)
-	}
-
-	assertCurrentPostgresMigrationState(t, db, "base_schema")
-	assertFinancialRecordsPreserved(t, db)
 	var stored, unrelated string
 	if err := db.QueryRow(`SELECT response_body FROM idempotency_keys WHERE id = 'invite-key'`).Scan(&stored); err != nil {
 		t.Fatal(err)
@@ -117,6 +118,15 @@ func TestPostgresMigrationsUpgradeCentsAndLeaseLessSchema(t *testing.T) {
 	if unrelated != unrelatedResponse {
 		t.Fatalf("unrelated idempotency response changed: %s", unrelated)
 	}
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("upgrade cents and lease-less schema: %v", err)
+	}
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("cents and lease-less upgrade must be idempotent: %v", err)
+	}
+
+	assertCurrentPostgresMigrationState(t, db, "base_schema")
+	assertAccountsWiped(t, db)
 }
 
 func connectPostgresMigrationTestDB(t *testing.T) *sqlx.DB {
@@ -229,6 +239,7 @@ func assertCurrentPostgresMigrationState(t *testing.T, db *sqlx.DB, legacyName s
 		{8, "household_domains"},
 		{9, "workos_authkit_users"},
 		{10, "revoked_sessions"},
+		{11, "oidc_auth_subjects"},
 	}
 	if len(ledger) != len(expected) {
 		t.Fatalf("unexpected migration ledger: %#v", ledger)
@@ -278,6 +289,38 @@ func assertFinancialRecordsPreserved(t *testing.T, db *sqlx.DB) {
 	}
 }
 
+// assertAccountsWiped checks migration 11: every pre-OIDC account and the
+// houses and records it owned are gone, and users has the OIDC columns.
+func assertAccountsWiped(t *testing.T, db *sqlx.DB) {
+	t.Helper()
+	for _, table := range []string{"users", "houses", "house_members", "expenses", "expense_splits", "idempotency_keys", "revoked_sessions"} {
+		var count int
+		if err := db.Get(&count, "SELECT COUNT(*) FROM "+table); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s still has %d rows after the OIDC account reset", table, count)
+		}
+	}
+	if got, want := userColumns(t, db), "auth_subject,created_at,email,id,name"; got != want {
+		t.Fatalf("users columns = %s, want %s", got, want)
+	}
+}
+
+func userColumns(t *testing.T, db *sqlx.DB) string {
+	t.Helper()
+	var columns []string
+	query := `SELECT column_name FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'users' ORDER BY column_name`
+	if db.DriverName() == "sqlite3" {
+		query = `SELECT name FROM pragma_table_info('users') ORDER BY name`
+	}
+	if err := db.Select(&columns, query); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(columns, ",")
+}
+
 func TestSQLiteForeignKeysAndMigrations(t *testing.T) {
 	db, err := Connect("sqlite://:memory:")
 	if err != nil {
@@ -310,6 +353,10 @@ func TestSQLiteForeignKeysAndMigrations(t *testing.T) {
 	expectedMigrations := len(migrations(db.DriverName()))
 	if migrationCount != expectedMigrations {
 		t.Fatalf("expected %d recorded migrations, got %d", expectedMigrations, migrationCount)
+	}
+	// A fresh database ends with the same users table as an upgraded one.
+	if got, want := userColumns(t, db), "auth_subject,created_at,email,id,name"; got != want {
+		t.Fatalf("fresh users columns = %s, want %s", got, want)
 	}
 }
 
@@ -390,6 +437,7 @@ func TestSQLiteMigrationsUpgradeLegacySchema(t *testing.T) {
 		"household_domains",
 		"workos_authkit_users",
 		"revoked_sessions",
+		"oidc_auth_subjects",
 	}
 	if len(names) != len(wantNames) {
 		t.Fatalf("unexpected migration ledger names: %#v", names)
@@ -400,23 +448,7 @@ func TestSQLiteMigrationsUpgradeLegacySchema(t *testing.T) {
 		}
 	}
 
-	var amountCents int64
-	if err := db.Get(&amountCents, "SELECT amount_cents FROM expenses WHERE id = 'expense-1'"); err != nil {
-		t.Fatal(err)
-	}
-	if amountCents != 1234 {
-		t.Fatalf("expected 1234 amount_cents, got %d", amountCents)
-	}
-
-	var splitCents []struct {
-		ShareAmountCents int64 `db:"share_amount_cents"`
-	}
-	if err := db.Select(&splitCents, "SELECT share_amount_cents FROM expense_splits WHERE expense_id = 'expense-1' ORDER BY id"); err != nil {
-		t.Fatal(err)
-	}
-	if len(splitCents) != 2 || splitCents[0].ShareAmountCents != 617 || splitCents[1].ShareAmountCents != 617 {
-		t.Fatalf("expected split cents backfill, got %#v", splitCents)
-	}
+	assertAccountsWiped(t, db)
 }
 
 func TestSQLiteMigrationRedactsLegacyInvitationIdempotencyToken(t *testing.T) {
@@ -447,7 +479,8 @@ func TestSQLiteMigrationRedactsLegacyInvitationIdempotencyToken(t *testing.T) {
 		VALUES ('key-1', 'user-1', 'key-1', 'POST', '/api/houses/house-1/invites', 'hash', 'completed', 201, $1, 'application/json')`, legacyResponse); err != nil {
 		t.Fatal(err)
 	}
-	if err := RunMigrations(db); err != nil {
+	// Only the redaction migration: migration 11 later deletes every account's data.
+	if err := migrations(db.DriverName())[4].up(ctx, db); err != nil {
 		t.Fatal(err)
 	}
 	var stored string

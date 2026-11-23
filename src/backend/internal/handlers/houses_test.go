@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/roomies/backend/internal/models"
 	"github.com/roomies/backend/internal/repository"
 )
@@ -16,19 +18,30 @@ func setupTest(t *testing.T) (http.Handler, *repository.UserRepository, string, 
 	return env.Router, env.UserRepo, env.JWTSecret, env.Cleanup
 }
 
+// registerUser creates a signed-in user the way an OIDC sign-in would and
+// returns a session token for it. The password argument is ignored.
 func registerUser(t *testing.T, router http.Handler, name, email, password string) string {
-	body := map[string]string{"name": name, "email": email, "password": password}
-	data, _ := json.Marshal(body)
-	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("register failed: %d %s", w.Code, w.Body.String())
+	t.Helper()
+	value, ok := testEnvs.Load(router)
+	if !ok {
+		t.Fatal("registerUser needs a router from newTestEnv")
 	}
-	var resp models.AuthResponse
-	json.NewDecoder(w.Body).Decode(&resp)
-	return resp.Token
+	env := value.(*testEnv)
+	user, err := env.UserRepo.UpsertFromOIDC(t.Context(), "subject-"+email, email, name)
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"jti":     models.NewID(),
+		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
+	}).SignedString([]byte(env.JWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func getUserID(t *testing.T, router http.Handler, token string) string {

@@ -59,7 +59,7 @@ func TestEncryptedInvitationDeliveryRedactsDatabaseAndProvidesAcceptableSMTPLink
 	if err != nil || link.Query().Get("token") != token {
 		t.Fatalf("captured SMTP link = %q, %v", notifications[0].AcceptanceURL, err)
 	}
-	if _, err := db.Exec(`INSERT INTO users (id, name, email, password_hash, created_at) VALUES ('user-invitee', 'Invitee', 'invitee@example.com', 'hash', CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO users (id, name, email, auth_subject, created_at) VALUES ('user-invitee', 'Invitee', 'invitee@example.com', 'sub-invitee', CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.AcceptInvitation(context.Background(), token, "user-invitee", "invitee@example.com"); err != nil {
@@ -290,8 +290,8 @@ func seedHouseFixture(t *testing.T, db *sqlx.DB) (houseID, adminID string) {
 	t.Helper()
 	adminID = "user-admin"
 	houseID = "house-1"
-	if _, err := db.Exec(`INSERT INTO users (id, name, email, password_hash, created_at) VALUES
-		('user-admin', 'Admin', 'admin@example.com', 'hash', CURRENT_TIMESTAMP)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO users (id, name, email, auth_subject, created_at) VALUES
+		('user-admin', 'Admin', 'admin@example.com', 'sub-admin', CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO houses (id, name, created_at) VALUES ('house-1', 'Test House', CURRENT_TIMESTAMP)`); err != nil {
