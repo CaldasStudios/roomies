@@ -52,6 +52,8 @@ class RoomiesStrings {
       'El inicio de sesión está disponible en las apps web y Android.');
   String get name => _t('Name', 'Nome', 'Nombre');
 
+  String get continueToDashboard => _t('Continue to dashboard',
+      'Continuar para o painel', 'Continuar al panel');
   String get dashboard => _t('Dashboard', 'Painel', 'Panel');
   String welcomeBack(String name) =>
       _t('Hi, $name', 'Olá, $name', 'Hola, $name');

@@ -18,6 +18,7 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
   var _loading = false;
   var _attempted = false;
   var _retryable = false;
+  var _terminal = false;
   String? _status;
 
   @override
@@ -49,8 +50,10 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
     });
     final token = await app.api.loadPendingInvitation();
     if (token == null || token.isEmpty) {
+      app.pendingInvitation = null;
       setState(() {
         _loading = false;
+        _terminal = true;
         _status = app.strings.invitationMissing;
       });
       return;
@@ -71,9 +74,19 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
         context.go('/');
         return;
       }
+      final dead = error.status == 403 ||
+          error.status == 404 ||
+          error.status == 410;
+      if (dead) {
+        // The invitation can never succeed: forget it so it stops redirecting.
+        await app.api.clearPendingInvitation();
+        app.pendingInvitation = null;
+      }
+      if (!mounted) return;
       setState(() {
         _loading = false;
-        _retryable = true;
+        _retryable = !dead;
+        _terminal = dead;
         _status = app.strings.invitationFailed(error.message);
       });
     } catch (error) {
@@ -106,6 +119,13 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
               style: Theme.of(context).textTheme.bodyLarge,
             ),
           ),
+          if (_terminal) ...[
+            const SizedBox(height: 16),
+            RoomiesPrimaryButton(
+              label: s.continueToDashboard,
+              onPressed: () => context.go('/dashboard'),
+            ),
+          ],
           if (_retryable) ...[
             const SizedBox(height: 16),
             RoomiesPrimaryButton(
