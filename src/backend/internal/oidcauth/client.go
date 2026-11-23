@@ -22,7 +22,9 @@ import (
 var ErrUnavailable = errors.New("oidc discovery unavailable")
 
 // httpClient bounds every provider call (discovery, JWKS, token, userinfo)
-// and never follows a redirect from https down to http.
+// and never follows a redirect from https down to http. A POST (the token
+// exchange) is never redirected to another origin, since a 307/308 would
+// resend its form, client secret included.
 var httpClient = &http.Client{Timeout: 15 * time.Second, CheckRedirect: checkRedirect}
 
 func checkRedirect(req *http.Request, via []*http.Request) error {
@@ -31,6 +33,10 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	}
 	if strings.EqualFold(via[len(via)-1].URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
 		return errors.New("refusing redirect from https to http")
+	}
+	if first := via[0]; first.Method == http.MethodPost &&
+		(!strings.EqualFold(first.URL.Scheme, req.URL.Scheme) || !strings.EqualFold(first.URL.Host, req.URL.Host)) {
+		return errors.New("refusing cross-origin redirect of a token request")
 	}
 	return nil
 }

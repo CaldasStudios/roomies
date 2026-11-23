@@ -185,3 +185,30 @@ func TestTokenAuthStyleFollowsDiscovery(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenRequestIsNotRedirectedCrossOrigin(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Error("token request followed a cross-origin redirect")
+		}
+	}))
+	defer other.Close()
+	tokenHost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			http.Redirect(w, r, other.URL+"/token", http.StatusTemporaryRedirect)
+			return
+		}
+		http.Redirect(w, r, "/token", http.StatusTemporaryRedirect)
+	}))
+	defer tokenHost.Close()
+	client := &http.Client{CheckRedirect: checkRedirect}
+	// Same-origin redirect of a POST is followed (it ends at the cross-origin hop).
+	_, err := client.Post(tokenHost.URL+"/old-token", "application/x-www-form-urlencoded", strings.NewReader("client_secret=s"))
+	if err == nil || !strings.Contains(err.Error(), "cross-origin redirect") {
+		t.Fatalf("err = %v", err)
+	}
+	// A GET (discovery, JWKS) may still follow a cross-origin redirect.
+	if _, err := client.Get(tokenHost.URL + "/token"); err != nil {
+		t.Fatalf("GET redirect err = %v", err)
+	}
+}
