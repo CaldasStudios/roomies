@@ -38,7 +38,7 @@ const (
 	oidcNativeCallbackPath = "/api/auth/oidc/native/callback"
 	nativeAppRedirect      = "app.roomies.roomies://oidc"
 	// webLandingPath is where the browser lands after web sign-in.
-	webLandingPath = "/"
+	webLandingPath = "/app/"
 )
 
 // Sign-in failure codes sent to the web app (auth_error) and the Android app
@@ -358,7 +358,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 			// A hint minted by another issuer (the configuration changed
 			// since sign-in) must not be sent to the current provider.
 			if h.oidc.Enabled() && issuer == h.oidc.Issuer {
-				logoutURL = h.oidc.LogoutURL(r.Context(), idTokenHint, h.publicBaseURL+"/")
+				logoutURL = h.oidc.LogoutURL(r.Context(), idTokenHint, h.publicBaseURL+webLandingPath)
 			}
 		}
 	}

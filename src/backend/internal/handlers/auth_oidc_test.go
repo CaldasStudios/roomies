@@ -212,7 +212,7 @@ func TestOIDCCallbackSignsInWebUser(t *testing.T) {
 			f := newFakeOIDC(t)
 			f.profileInIDToken = profileInIDToken
 			w := signInWeb(t, f, f.handler(env))
-			if w.Code != http.StatusFound || w.Header().Get("Location") != oidcTestBase+"/" {
+			if w.Code != http.StatusFound || w.Header().Get("Location") != oidcTestBase+"/app/" {
 				t.Fatalf("callback status = %d location = %q body = %s", w.Code, w.Header().Get("Location"), w.Body.String())
 			}
 			if f.lastRedirectParam != oidcTestBase+"/api/auth/oidc/callback" {
@@ -271,7 +271,7 @@ func TestOIDCCallbackFailuresRedirectWithCode(t *testing.T) {
 				query = tc.query(url.QueryEscape(q.Get("state")))
 			}
 			w := webCallback(h, cookies, query)
-			if w.Code != http.StatusFound || w.Header().Get("Location") != oidcTestBase+"/?auth_error="+tc.want {
+			if w.Code != http.StatusFound || w.Header().Get("Location") != oidcTestBase+"/app/?auth_error="+tc.want {
 				t.Fatalf("status = %d location = %q", w.Code, w.Header().Get("Location"))
 			}
 			if responseCookie(w, "__Host-roomies_session") != nil {
@@ -292,7 +292,7 @@ func TestOIDCCallbackRefusesEmailOfAnotherSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := signInWeb(t, f, f.handler(env))
-	if w.Header().Get("Location") != oidcTestBase+"/?auth_error=email_in_use" {
+	if w.Header().Get("Location") != oidcTestBase+"/app/?auth_error=email_in_use" {
 		t.Fatalf("location = %q", w.Header().Get("Location"))
 	}
 }
@@ -443,7 +443,7 @@ func TestLogoutReturnsProviderLogoutURL(t *testing.T) {
 		t.Fatalf("logout_url = %q", body["logout_url"])
 	}
 	q := logout.Query()
-	if len(strings.Split(q.Get("id_token_hint"), ".")) != 3 || q.Get("post_logout_redirect_uri") != oidcTestBase+"/" || q.Get("client_id") != "roomies" {
+	if len(strings.Split(q.Get("id_token_hint"), ".")) != 3 || q.Get("post_logout_redirect_uri") != oidcTestBase+"/app/" || q.Get("client_id") != "roomies" {
 		t.Fatalf("logout query = %v", q)
 	}
 	// A retry after a lost response still gets the provider logout URL.
@@ -486,7 +486,7 @@ func TestOIDCSameSubjectFromAnotherIssuerIsAnotherUser(t *testing.T) {
 	first, second := newFakeOIDC(t), newFakeOIDC(t)
 	second.subject = first.subject
 	for _, f := range []*fakeOIDC{first, second} {
-		if w := signInWeb(t, f, f.handler(env)); w.Header().Get("Location") != oidcTestBase+"/" {
+		if w := signInWeb(t, f, f.handler(env)); w.Header().Get("Location") != oidcTestBase+"/app/" {
 			t.Fatalf("sign-in via %s: location = %q", f.URL, w.Header().Get("Location"))
 		}
 	}
@@ -521,7 +521,7 @@ func TestPlainHTTPDeploymentKeepsPlainCookieNames(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	h.OIDCCallback(w, req)
-	if w.Header().Get("Location") != "http://localhost:8080/" || responseCookie(w, "roomies_session") == nil {
+	if w.Header().Get("Location") != "http://localhost:8080/app/" || responseCookie(w, "roomies_session") == nil {
 		t.Fatalf("location = %q cookies = %v", w.Header().Get("Location"), w.Result().Cookies())
 	}
 }

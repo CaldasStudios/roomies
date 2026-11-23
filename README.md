@@ -131,7 +131,7 @@ Optional backend variables (email invitations, Web Push, FCM) are listed with co
 At the provider, register:
 
 - redirect URIs `{ROOMIES_PUBLIC_BASE_URL}/api/auth/oidc/callback` (web) and `{ROOMIES_PUBLIC_BASE_URL}/api/auth/oidc/native/callback` (Android)
-- post-logout redirect URI `{ROOMIES_PUBLIC_BASE_URL}/`
+- post-logout redirect URI `{ROOMIES_PUBLIC_BASE_URL}/app/`
 - scopes `openid profile email`
 
 The provider must report verified emails; sign-in is refused for unverified ones. Accounts are keyed by the provider's `sub`. Sign-in works on web and Android. The Windows and Linux apps show a note instead of a sign-in button.
