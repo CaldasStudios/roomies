@@ -8,11 +8,23 @@ import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 import 'state/app_state.dart';
 
-GoRouter createRouter(AppState appState) {
+GoRouter createRouter(AppState appState, {String initialLocation = '/'}) {
   return GoRouter(
     refreshListenable: appState,
-    initialLocation: '/',
+    initialLocation: initialLocation,
     redirect: (context, state) {
+      // The backend reports a failed sign-in as `/?auth_error=<code>`. Keep
+      // the code for the login screen and drop it from the URL so a refresh
+      // does not show it again.
+      final authError = state.uri.queryParameters['auth_error'];
+      if (authError != null) {
+        appState.authError = authError;
+        final rest = Map.of(state.uri.queryParameters)..remove('auth_error');
+        return Uri(
+          path: state.uri.path,
+          queryParameters: rest.isEmpty ? null : rest,
+        ).toString();
+      }
       if (!appState.sessionReady) return null;
       final path = state.uri.path;
       final authed = appState.api.isAuthenticated;
