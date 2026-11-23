@@ -124,7 +124,7 @@ Optional backend variables (email invitations, Web Push, FCM) are listed with co
 
 ## Apps
 
-CI builds the Android APK, Windows bundle and Linux AppImage on every push as workflow artifacts. The native apps ask for your server's address on first launch. The web app is served by your server.
+CI builds the Android APK (64-bit ARM only), Windows bundle and Linux AppImage as workflow artifacts when `src/frontend/` changes. The native apps ask for your server's address on first launch. The web app is served by your server.
 
 Android release signing on `main` uses these repository secrets when present: `ANDROID_KEYSTORE_BASE64` (`base64 -w0 upload-keystore.jks`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Otherwise APKs use debug keys. Locally, put the same values in `src/frontend/android/key.properties` (gitignored).
 

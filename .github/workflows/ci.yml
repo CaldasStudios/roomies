@@ -1,7 +1,9 @@
 name: CI
 
+# Branch pushes are covered by their pull request. Only main runs on push.
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -11,7 +13,30 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GO_VERSION: '1.26.8'
+  GOTOOLCHAIN: local
+  FLUTTER_VERSION: '3.27.1'
+
 jobs:
+  # The native app builds below only run when the frontend or this workflow changes.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'src/frontend/**'
+              - '.github/workflows/ci.yml'
+
   pre-commit:
     runs-on: ubuntu-latest
     steps:
@@ -19,24 +44,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
       - run: pip install pre-commit
       - run: pre-commit run --show-diff-on-failure --color=always --all-files
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.8'
-      - run: go vet ./...
-        working-directory: src/backend
-        env:
-          GOTOOLCHAIN: local
-
   backend:
-    env:
-      GOTOOLCHAIN: local
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -51,19 +66,23 @@ jobs:
     defaults:
       run:
         working-directory: src/backend
+    env:
+      JWT_SECRET: ci-only-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.8'
-      - run: go test ./...
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: src/backend/go.sum
+      - run: go vet ./...
+      - name: Test on SQLite
+        run: go test ./...
         env:
           DATABASE_URL: sqlite://ci.db
-          JWT_SECRET: ci-only-secret
-      - run: go test ./...
+      - name: Test on Postgres
+        run: go test ./...
         env:
           DATABASE_URL: postgres://roomies:roomies@localhost:5432/roomies?sslmode=disable
-          JWT_SECRET: ci-only-secret
 
   flutter:
     runs-on: ubuntu-latest
@@ -74,8 +93,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
+          cache: true
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
@@ -90,6 +110,8 @@ jobs:
           retention-days: 3
 
   android:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -98,25 +120,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
+          cache: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      # Install the SDK and accept licenses instead of relying on the runner
-      # image. Third-party actions are pinned to a commit because this job can
-      # hold the signing key.
+          cache: gradle
+          cache-dependency-path: |
+            src/frontend/android/*.gradle
+            src/frontend/android/app/build.gradle
+            src/frontend/android/gradle/wrapper/gradle-wrapper.properties
+      # This job can hold the signing key, so third-party actions are pinned
+      # to a commit. Installing the SDK here accepts its licenses. Gradle then
+      # fetches the platform and build tools it needs.
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
-          # The default also requests the obsolete "tools" package, which
-          # current cmdline-tools no longer provide. Gradle fetches the
-          # platform and build-tools it needs once licenses are accepted.
+          # The default list asks for the old "tools" package, which current
+          # cmdline-tools no longer ship.
           packages: platform-tools
       - name: Configure release signing
-        # Only pushes to main get the upload key; other branches and pull
-        # requests (including forks, which never see secrets) build with debug
-        # keys, so a release-signed APK is never published from unreviewed code.
+        # Only pushes to main get the upload key. Pull requests and forks build
+        # with debug keys, so unreviewed code never ships a release-signed APK.
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -135,8 +161,8 @@ jobs:
             echo "keyAlias=$ANDROID_KEY_ALIAS"
             echo "keyPassword=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
           } > android/key.properties
-      - run: flutter pub get
-      - run: flutter build apk --release --dart-define=ROOMIES_API_URL=
+      # 64-bit ARM only. 32-bit ARM and x86 phones are not supported.
+      - run: flutter build apk --release --target-platform android-arm64 --dart-define=ROOMIES_API_URL=
       - uses: actions/upload-artifact@v4
         with:
           name: roomies-android-apk-${{ github.sha }}
@@ -145,7 +171,9 @@ jobs:
           retention-days: 14
 
   windows:
-    # Flutter 3.27 only detects Visual Studio up to 2022.
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    # Flutter 3.27 finds Visual Studio 2022 at the newest.
     runs-on: windows-2022
     defaults:
       run:
@@ -154,9 +182,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-      - run: flutter pub get
+          cache: true
       - run: flutter build windows --release --dart-define=ROOMIES_API_URL=
       - uses: actions/upload-artifact@v4
         with:
@@ -166,13 +194,16 @@ jobs:
           retention-days: 14
 
   linux-appimage:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
+          cache: true
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -180,15 +211,13 @@ jobs:
           curl -fsSLo "$RUNNER_TEMP/appimagetool" \
             https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
           chmod +x "$RUNNER_TEMP/appimagetool"
-      - run: flutter pub get
-        working-directory: src/frontend
       - run: flutter build linux --release --dart-define=ROOMIES_API_URL=
         working-directory: src/frontend
       - name: Package AppImage
         working-directory: src/frontend/build/linux
         env:
           APPIMAGETOOL: ${{ runner.temp }}/appimagetool
-          # Runners have no FUSE; unpack appimagetool instead of mounting it.
+          # Runners have no FUSE, so appimagetool unpacks itself instead of mounting.
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
           set -euo pipefail
@@ -217,7 +246,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Builds the images CI publishes and runs the README compose file against them.
+  # Builds the images that main publishes and boots the README compose file on them.
   images:
     needs: flutter
     runs-on: ubuntu-latest
@@ -227,12 +256,27 @@ jobs:
         with:
           name: web-build
           path: src/frontend/build/web
-      - name: Development compose config
+      - name: Check development compose config
         run: docker compose config -q
-      - name: Build images
-        run: |
-          docker build -t ghcr.io/jobucaldas/roomies-backend:nightly src/backend
-          docker build --target prebuilt -t ghcr.io/jobucaldas/roomies-frontend:nightly src/frontend
+      # Layers go to the GitHub Actions cache. The publish job reads them back.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build backend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: src/backend
+          load: true
+          tags: ghcr.io/jobucaldas/roomies-backend:nightly
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: src/frontend
+          target: prebuilt
+          load: true
+          tags: ghcr.io/jobucaldas/roomies-frontend:nightly
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
       - name: Run the README compose file
         run: |
           mkdir smoke
@@ -253,11 +297,11 @@ jobs:
       - if: failure()
         run: cd smoke && docker compose logs
 
-  # Main-only: publish the backend and frontend images.
+  # Main only. Publishes the backend and frontend images.
   ghcr-images:
     name: GHCR images (nightly + datetime_sha)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [pre-commit, lint, backend, flutter, images]
+    needs: [pre-commit, backend, flutter, images]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -294,6 +338,7 @@ jobs:
           context: src/backend
           file: src/backend/Dockerfile
           push: true
+          cache-from: type=gha,scope=backend
           tags: |
             ghcr.io/${{ steps.tags.outputs.owner }}/roomies-backend:nightly
             ghcr.io/${{ steps.tags.outputs.owner }}/roomies-backend:dev
@@ -304,6 +349,7 @@ jobs:
           context: src/frontend
           target: prebuilt
           push: true
+          cache-from: type=gha,scope=frontend
           tags: |
             ghcr.io/${{ steps.tags.outputs.owner }}/roomies-frontend:nightly
             ghcr.io/${{ steps.tags.outputs.owner }}/roomies-frontend:dev
