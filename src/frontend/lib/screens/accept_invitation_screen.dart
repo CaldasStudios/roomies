@@ -29,8 +29,9 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
 
   Future<void> _bootstrap() async {
     final app = context.read<AppState>();
-    if (widget.initialToken != null && widget.initialToken!.isNotEmpty) {
-      await app.api.savePendingInvitation(widget.initialToken!);
+    final initial = widget.initialToken?.trim() ?? '';
+    if (initial.isNotEmpty) {
+      await app.api.savePendingInvitation(initial);
       if (mounted) context.go('/accept-invitation');
     }
     if (!app.api.isAuthenticated) {
@@ -48,8 +49,9 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
       _loading = true;
       _status = app.strings.joiningHouse;
     });
-    final token = await app.api.loadPendingInvitation();
-    if (token == null || token.isEmpty) {
+    final token = (await app.api.loadPendingInvitation())?.trim() ?? '';
+    if (token.isEmpty) {
+      await app.api.clearPendingInvitation();
       app.pendingInvitation = null;
       setState(() {
         _loading = false;
@@ -74,7 +76,8 @@ class _AcceptInvitationScreenState extends State<AcceptInvitationScreen> {
         context.go('/');
         return;
       }
-      final dead = error.status == 403 ||
+      final dead = error.status == 400 ||
+          error.status == 403 ||
           error.status == 404 ||
           error.status == 410;
       if (dead) {
