@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -117,11 +118,7 @@ func requireHTTPSEndpoints(issuer string, p *oidc.Provider) error {
 
 func (c *Client) config(p *oidc.Provider, redirect string) oauth2.Config {
 	endpoint := p.Endpoint()
-	endpoint.AuthStyle = oauth2.AuthStyleInHeader
-	if c.ClientSecret == "" {
-		// Public client: send client_id in the body, no empty Basic auth.
-		endpoint.AuthStyle = oauth2.AuthStyleInParams
-	}
+	endpoint.AuthStyle = tokenAuthStyle(p, c.ClientSecret)
 	return oauth2.Config{
 		ClientID:     c.ClientID,
 		ClientSecret: c.ClientSecret,
@@ -129,6 +126,26 @@ func (c *Client) config(p *oidc.Provider, redirect string) oauth2.Config {
 		Endpoint:     endpoint,
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 	}
+}
+
+// tokenAuthStyle picks how the client authenticates at the token endpoint:
+// HTTP Basic (the OIDC default) unless the provider advertises only
+// client_secret_post. Public clients send client_id in the body, no empty
+// Basic auth.
+func tokenAuthStyle(p *oidc.Provider, secret string) oauth2.AuthStyle {
+	if secret == "" {
+		return oauth2.AuthStyleInParams
+	}
+	var meta struct {
+		Methods []string `json:"token_endpoint_auth_methods_supported"`
+	}
+	if err := p.Claims(&meta); err != nil || len(meta.Methods) == 0 {
+		return oauth2.AuthStyleInHeader
+	}
+	if slices.Contains(meta.Methods, "client_secret_basic") || !slices.Contains(meta.Methods, "client_secret_post") {
+		return oauth2.AuthStyleInHeader
+	}
+	return oauth2.AuthStyleInParams
 }
 
 // AuthURL returns the provider authorization URL for one sign-in attempt.

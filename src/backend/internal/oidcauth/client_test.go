@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 )
 
 func TestEnabledNeedsIssuerAndClientID(t *testing.T) {
@@ -144,3 +147,41 @@ func TestMixedCaseHTTPSIssuerStillRequiresHTTPSEndpoints(t *testing.T) {
 }
 
 func sameURL(u string) string { return u }
+
+func TestTokenAuthStyleFollowsDiscovery(t *testing.T) {
+	cases := []struct {
+		methods []string
+		secret  string
+		want    oauth2.AuthStyle
+	}{
+		{nil, "s", oauth2.AuthStyleInHeader},
+		{[]string{"client_secret_basic", "client_secret_post"}, "s", oauth2.AuthStyleInHeader},
+		{[]string{"client_secret_post"}, "s", oauth2.AuthStyleInParams},
+		{[]string{"private_key_jwt"}, "s", oauth2.AuthStyleInHeader},
+		{[]string{"client_secret_basic"}, "", oauth2.AuthStyleInParams},
+	}
+	for _, tc := range cases {
+		var issuer string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			doc := map[string]any{
+				"issuer":                 issuer,
+				"authorization_endpoint": issuer + "/authorize",
+				"token_endpoint":         issuer + "/token",
+				"jwks_uri":               issuer + "/jwks",
+			}
+			if tc.methods != nil {
+				doc["token_endpoint_auth_methods_supported"] = tc.methods
+			}
+			_ = json.NewEncoder(w).Encode(doc)
+		}))
+		issuer = server.URL
+		p, err := oidc.NewProvider(t.Context(), issuer)
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tokenAuthStyle(p, tc.secret); got != tc.want {
+			t.Fatalf("methods %v secret %q: style = %v, want %v", tc.methods, tc.secret, got, tc.want)
+		}
+	}
+}
