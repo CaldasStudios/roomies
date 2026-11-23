@@ -252,14 +252,20 @@ class AuthResponse {
 }
 
 class AuthConfig {
-  AuthConfig({required this.oidc, required this.oidcName});
+  AuthConfig({
+    required this.oidc,
+    required this.oidcName,
+    this.oidcNative = false,
+  });
 
   final bool oidc;
   final String oidcName;
+  final bool oidcNative;
 
   factory AuthConfig.fromJson(Map<String, dynamic> json) => AuthConfig(
         oidc: json['oidc'] as bool? ?? false,
         oidcName: json['oidc_name'] as String? ?? '',
+        oidcNative: json['oidc_native'] as bool? ?? false,
       );
 }
 

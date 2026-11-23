@@ -46,6 +46,10 @@ class RoomiesStrings {
   String continueWith(String provider) =>
       _t('Continue with $provider', 'Continuar com $provider',
           'Continuar con $provider');
+  String get signInNativeOffNote => _t(
+      'Sign-in on this app is turned off by the server. Use the web app.',
+      'A entrada neste app está desativada pelo servidor. Use o app web.',
+      'El inicio de sesión en esta app está desactivado por el servidor. Usa la app web.');
   String get signInDesktopNote => _t(
       'Sign-in is available on the web and Android apps.',
       'A entrada está disponível nos apps web e Android.',

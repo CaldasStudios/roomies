@@ -105,4 +105,38 @@ void main() {
     expect(find.textContaining('Verify your email'), findsOneWidget);
     expect(find.text('Continue with CaldasStudios'), findsOneWidget);
   });
+
+  Future<void> pumpNative(WidgetTester tester, String body) => pumpLogin(
+        tester,
+        MockClient((_) async => http.Response(body, 200)),
+        mode: SignInMode.native,
+      );
+
+  testWidgets('android shows the button when the server enables native',
+      (tester) async {
+    await pumpNative(
+        tester, '{"oidc":true,"oidc_name":"CaldasStudios","oidc_native":true}');
+    expect(find.text('Continue with CaldasStudios'), findsOneWidget);
+  });
+
+  testWidgets('android shows a note when native sign-in is off or missing',
+      (tester) async {
+    await pumpNative(tester,
+        '{"oidc":true,"oidc_name":"CaldasStudios","oidc_native":false}');
+    expect(find.textContaining('turned off by the server'), findsOneWidget);
+    expect(find.textContaining('Continue with'), findsNothing);
+
+    await pumpNative(tester, '{"oidc":true,"oidc_name":"CaldasStudios"}');
+    expect(find.textContaining('turned off by the server'), findsOneWidget);
+    expect(find.textContaining('Continue with'), findsNothing);
+  });
+
+  testWidgets('web ignores oidc_native', (tester) async {
+    await pumpLogin(
+      tester,
+      MockClient((_) async =>
+          http.Response('{"oidc":true,"oidc_name":"CaldasStudios"}', 200)),
+    );
+    expect(find.text('Continue with CaldasStudios'), findsOneWidget);
+  });
 }

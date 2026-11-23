@@ -129,6 +129,12 @@ class _LoginScreenState extends State<LoginScreen> {
             )
           else if (_configFailed)
             OutlinedButton(onPressed: _loadConfig, child: Text(s.retry))
+          else if (_mode == SignInMode.native && _config?.oidcNative != true)
+            Text(
+              s.signInNativeOffNote,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            )
           else if (_config?.oidc == true)
             FilledButton(
               onPressed: _loading ? null : _signIn,
