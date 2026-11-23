@@ -17,8 +17,8 @@ void main() {
     final source = File('web/roomies-sw.js').readAsStringSync();
     expect(source, contains("body: 'You have a Roomies notification.'"));
     expect(source, contains(r'tag: `roomies-${id}`'));
-    expect(source, contains(r'`/house/${encodeURIComponent(houseId)}`'));
-    expect(source, contains('const path = houseId ?'));
+    expect(source, contains(r'`house/${encodeURIComponent(houseId)}`'));
+    expect(source, contains('self.registration.scope'));
     expect(source, isNot(contains('/houses/')));
     expect(source, isNot(contains('endpoint')));
   });

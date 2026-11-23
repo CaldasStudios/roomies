@@ -1,5 +1,5 @@
 # Development stack: builds everything from this checkout.
-#   docker compose up --build                 # http://localhost:8080
+#   docker compose up --build                 # http://localhost:8080/app/
 #   docker compose run --rm test-backend      # gofmt, vet, tests
 #   docker compose run --rm test-frontend     # flutter analyze + test
 #   docker compose run --rm apk               # debug APK

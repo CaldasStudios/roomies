@@ -15,7 +15,7 @@ Roomies is a roommate-management app for shared expenses, notes, balances, settl
 - Household resources are house-scoped. Recurrence uses RFC 5545 with exceptions.
 
 ## Baseline commands
-- `docker compose up --build` (app at http://localhost:8080)
+- `docker compose up --build` (app at http://localhost:8080/app/)
 - `docker compose run --rm test-backend`
 - `docker compose run --rm test-frontend`
 - `docker compose run --rm apk`

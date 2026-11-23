@@ -101,7 +101,7 @@ volumes:
 ```sh
 POSTGRES_PASSWORD=          # openssl rand -hex 24
 JWT_SECRET=                 # openssl rand -hex 48
-ROOMIES_PUBLIC_BASE_URL=https://roomies.example.com   # or http://localhost:8080 to try it
+ROOMIES_PUBLIC_BASE_URL=https://roomies.example.com   # bare origin; app at /app/, API at /api (or http://localhost:8080 to try it)
 # SITE_ADDRESS=roomies.example.com                    # see the comment in compose.yaml
 # WORKOS_CLIENT_ID=client_...                         # optional, see below
 # WORKOS_API_KEY=sk_...
@@ -114,7 +114,7 @@ docker compose up -d
 curl -i http://localhost:8080/api/auth/me   # 401 means it is up
 ```
 
-Open `ROOMIES_PUBLIC_BASE_URL`. With `APP_ENV: production` the server refuses to start unless that URL is `https://` (or `localhost`), so put it behind `SITE_ADDRESS` or your own TLS proxy. Update with `docker compose pull && docker compose up -d`; pin `:nightly` to a `YYYYMMDDHHMMSS_<shortsha>` tag to stay on a fixed version. Data lives in the `pgdata` volume.
+Open `{ROOMIES_PUBLIC_BASE_URL}/app/` (the root redirects there). `ROOMIES_PUBLIC_BASE_URL` is the bare origin; the API is at `/api`. With `APP_ENV: production` the server refuses to start unless that URL is `https://` (or `localhost`), so put it behind `SITE_ADDRESS` or your own TLS proxy. Update with `docker compose pull && docker compose up -d`; pin `:nightly` to a `YYYYMMDDHHMMSS_<shortsha>` tag to stay on a fixed version. Data lives in the `pgdata` volume.
 
 Optional backend variables (email invitations, Web Push, FCM) are listed with comments in [`.env.example`](.env.example); add the ones you set to the `x-backend` environment.
 
@@ -136,7 +136,7 @@ Everything runs through Docker Compose; no Go or Flutter install needed. The roo
 docker compose up --build    # optional: cp .env.example .env first
 ```
 
-Open <http://localhost:8080/> and sign up with any email and password. This starts Postgres, the Go API and worker (`go run` on the mounted `src/backend/`), and `web`, which builds the Flutter web app from `src/frontend/` and serves it with Caddy next to the API. Change the port with `HTTP_PORT` and a matching `ROOMIES_PUBLIC_BASE_URL`. Stop with `docker compose down` (`-v` also wipes the database).
+Open <http://localhost:8080/app/> and sign up with any email and password. This starts Postgres, the Go API and worker (`go run` on the mounted `src/backend/`), and `web`, which builds the Flutter web app from `src/frontend/` and serves it with Caddy next to the API. Change the port with `HTTP_PORT` and a matching `ROOMIES_PUBLIC_BASE_URL`. Stop with `docker compose down` (`-v` also wipes the database).
 
 | Changed | Do |
 |---|---|

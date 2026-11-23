@@ -19,7 +19,7 @@ COPY . .
 ARG BUILD_SHA=unknown
 # CanvasKit stays on the app origin so the CSP below can keep script-src and
 # connect-src off www.gstatic.com (the default build fetches CanvasKit from a CDN).
-RUN flutter build web --release --no-web-resources-cdn --dart-define=ROOMIES_API_URL=/api \
+RUN flutter build web --release --base-href /app/ --no-web-resources-cdn --dart-define=ROOMIES_API_URL=/api \
   && printf 'BUILD_SHA=%s\n' "${BUILD_SHA}" > build/web/BUILD_SHA.txt
 
 FROM docker.io/library/caddy:2.8-alpine AS runtime
@@ -58,12 +58,16 @@ COPY <<'CADDYFILE' /etc/caddy/Caddyfile
 		}
 	}
 
-	# SPA fallback so deep links and refreshes serve the Flutter shell.
-	handle {
+	# Serve the SPA under /app/ and redirect legacy root paths.
+	redir /app /app/
+	handle_path /app/* {
 		root * /app/dist
 		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
+	}
+	handle {
+		redir * /app{uri}
 	}
 }
 CADDYFILE

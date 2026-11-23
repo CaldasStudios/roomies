@@ -12,7 +12,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const houseId = event.notification.data && event.notification.data.houseId;
-  const path = houseId ? `/house/${encodeURIComponent(houseId)}` : '/';
+  const path = new URL(houseId ? `house/${encodeURIComponent(houseId)}` : '', self.registration.scope).pathname;
   event.waitUntil(clients.matchAll({type: 'window', includeUncontrolled: true}).then((windows) => {
     const existing = windows.find((client) => new URL(client.url).pathname === path);
     return existing ? existing.focus() : clients.openWindow(path);
